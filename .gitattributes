@@ -1,0 +1,3 @@
+# The scripts run under bash on Linux pods: CRLF line endings would break them (and the template's start command).
+* text=auto
+*.sh text eol=lf
