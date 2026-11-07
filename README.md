@@ -46,7 +46,7 @@ template/make-start-cmd.sh    prints bootstrap.sh as the JSON the template field
    | Container Start Command | the line printed by `template/make-start-cmd.sh` |
 
 4. **VS Code.** The RunPod entry in `chatLanguageModels.json` stays as it is: url
-   `http://localhost:8000/v1/chat/completions`, model id `deepseek-v4.1-flash`. Its API key must be the one in
+   `http://localhost:8000/v1/chat/completions`, model id `deepseek-v41-flash`. Its API key must be the one in
    `~/.config/runpod/self-hosted-api-key`. VS Code keeps the key in its secret storage (the `apiKey` field only holds
    a `${input:chat.lm.secret…}` reference to it), so if it holds a different key, change it to this one, once.
    To print the key: `cat ~/.config/runpod/self-hosted-api-key`
@@ -71,8 +71,8 @@ template/make-start-cmd.sh    prints bootstrap.sh as the JSON the template field
    14:..:..   .. min  ready
    14:..:..  engine ready after .. min; opening the tunnel localhost:8000 -> pod 127.0.0.1:8000
    =====================================================================================================
-    READY   deepseek-v4.1-flash at http://localhost:8000/v1   (your key accepted, test reply in <s> s)
-    VS Code: RunPod endpoint, url http://localhost:8000/v1/chat/completions, model id deepseek-v4.1-flash
+    READY   deepseek-v41-flash at http://localhost:8000/v1   (your key accepted, test reply in <s> s)
+    VS Code: RunPod endpoint, url http://localhost:8000/v1/chat/completions, model id deepseek-v41-flash
     Keep this terminal open: it holds the tunnel and reconnects it if it drops. Ctrl-C closes it.
     The pod bills until you Terminate it in the RunPod console. Closing the tunnel does not stop it.
    =====================================================================================================
@@ -139,9 +139,10 @@ tmux attach -t model                  # the model script's console. Detach: Ctrl
 
 ## Adding a model
 
-Copy `remote/deepseek-v41-flash.sh` to `remote/<name>.sh` and change `MODEL`, `SERVED_NAME` and the `vllm serve`
-flags. Keep the `preflight`, `download` and `serve` calls, and `--host 127.0.0.1 --port "$PORT" --api-key "$API_KEY"`.
-Then `./launch.sh <IP> <PORT> <name>`, and add the served name as a model in VS Code's RunPod entry.
+Copy `remote/deepseek-v41-flash.sh` to `remote/<name>.sh` and change `MODEL` and the `vllm serve` flags. Keep the
+`preflight`, `download` and `serve` calls, and `--host 127.0.0.1 --port "$PORT" --api-key "$API_KEY"`. The file name is
+also the model id the engine serves: run `./launch.sh <IP> <PORT> <name>`, and add `<name>` as a model id in VS Code's
+RunPod entry.
 
 ## Changing the template
 

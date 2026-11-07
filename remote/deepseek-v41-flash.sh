@@ -8,7 +8,7 @@
 . "$(dirname "$0")/common.sh"
 
 MODEL=deepseek-ai/DeepSeek-V4.1-Flash-1017
-SERVED_NAME=deepseek-v4.1-flash      # the model id in VS Code's chatLanguageModels.json
+SERVED_NAME=$(basename "$0" .sh)     # this script's name: the model id in VS Code's chatLanguageModels.json
 RUST_FRONTEND=1                      # 0: vLLM's Python frontend
 
 preflight
