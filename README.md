@@ -5,11 +5,12 @@ RunPod between sessions (no volume, no secrets), so the only cost is the time a 
 
 The RunPod template is generic: it only brings up SSH, and installs tmux for `launch.sh`. Everything model-specific
 lives here and is pushed to the pod by `launch.sh`, which also downloads and starts the model, follows it until it
-serves, and then holds a verified SSH tunnel from `localhost:8000` to the engine for VS Code.
+serves, prints the model's entry for VS Code, and then holds a verified SSH tunnel from `localhost:8000` to the engine
+for VS Code.
 
 ```
-launch.sh                     local, once per session: sets up the pod, reports progress, holds the tunnel
-models/deepseek-v41-flash.sh  DeepSeek-V4.1-Flash-1017: the settled vLLM command, TP = GPU count
+launch.sh                     local, per session: sets up the pod, prints the VS Code entry, holds the tunnel
+models/deepseek-v41-flash.sh  DeepSeek-V4.1-Flash-1017: the settled vLLM command (TP = GPU count), its VS Code entry
 models/gpu-smoke-test.sh      a 0.5B model with tool calling: the whole path on a cheap pod, before a large one
 remote/common.sh              pod side: preflight, download, vllm_serve; sourced by every model script
 remote/container-env.sh       pod side: the image's CUDA/vLLM and RunPod variables, for SSH shells and the model
@@ -21,11 +22,16 @@ template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-en
 
 ## One-time setup
 
-1. **SSH key.** RunPod console > Settings > SSH Public Keys: add `~/.ssh/id_ed25519.pub`. RunPod injects it into
-   every pod as `PUBLIC_KEY`.
+What it takes: this repo on your machine, with bash 5 or newer, OpenSSH (`ssh`, `ssh-keygen`), `curl`, `openssl` and
+VS Code (written against 1.145); and a RunPod account with credit. VS Code needs no GitHub sign-in or Copilot plan for
+a model you serve yourself.
 
-2. **API key.** One key for every pod, so VS Code never has to be re-keyed. It is a file on your machine that holds
-   only the key:
+1. **SSH key.** If you have no `~/.ssh/id_ed25519.pub`, create the key pair: `ssh-keygen -t ed25519`. Then RunPod
+   console > Settings > SSH Public Keys: add the contents of `~/.ssh/id_ed25519.pub`. RunPod injects it into every
+   pod it deploys from then on, as `PUBLIC_KEY`.
+
+2. **API key.** The key VS Code sends and the engine checks. One key for every pod, so VS Code is given it once. It
+   is a file on your machine that holds only the key:
 
    ```bash
    mkdir -p ~/.config/runpod
@@ -33,9 +39,8 @@ template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-en
    chmod 600 ~/.config/runpod/self-hosted-api-key
    ```
 
-   To keep a key you already use, put that in the file instead. `launch.sh` copies the key to each new pod, starts
-   vLLM with it, and checks it end to end. The key is not stored on RunPod: if your template still has a
-   `VLLM_API_KEY` environment variable or a `vllm_api_key` secret from before, delete them.
+   `launch.sh` copies the key to each new pod, starts vLLM with it, and checks it end to end. RunPod never stores
+   it: the template below has no environment variables or secrets.
 
 3. **Template.** Console > My Templates > New Template:
 
@@ -47,17 +52,27 @@ template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-en
    | Expose TCP Ports | `22` |
    | Expose HTTP Ports | none |
    | Environment Variables | none |
-   | Container Start Command | the line printed by `template/make-start-cmd.sh` |
+   | Container Start Command | the one line that `template/make-start-cmd.sh` prints (run it in this repo) |
 
-4. **VS Code.** The RunPod entry in `chatLanguageModels.json` stays as it is: url
-   `http://localhost:8000/v1/chat/completions`, model id `deepseek-v41-flash`. Its API key must be the one in
-   `~/.config/runpod/self-hosted-api-key`. VS Code keeps the key in its secret storage (the `apiKey` field only holds
-   a `${input:chat.lm.secret…}` reference to it), so if it holds a different key, change it to this one, once.
-   To print the key: `cat ~/.config/runpod/self-hosted-api-key`
+4. **VS Code.** Nothing to do before your first session. Then, once the model serves, `launch.sh` prints the model's
+   entry for VS Code's model list, `chatLanguageModels.json`, and these steps, which each model needs once:
+
+   1. Command Palette (Ctrl+Shift+P) > **Chat: Open Language Models (JSON)**. On a new install the file holds
+      just `[]`: replace all of it with the printed JSON, and save. That makes a group `RunPod` with the model in
+      it. For a later model, add only its object (the `{ }` inside `"models"`) to that group's `"models"` list.
+   2. Once, for the new `RunPod` group: Command Palette > **Chat: Manage Language Models**, then on the RunPod row
+      the gear icon > **Update API Key**, and paste the key (`cat ~/.config/runpod/self-hosted-api-key`). The key
+      does not go in the file: VS Code reads `apiKey` only as a reference into its secret storage, and this step
+      stores the key there and writes the reference, `"apiKey": "${input:chat.lm.secret.…}"`.
+   3. Pick the model, by its name in the entry (such as "DeepSeek V4.1 Flash (RunPod)"), in the Chat view's model
+      picker.
+
+   The entry's url (`http://localhost:8000/v1/chat/completions`, the tunnel) and the key are the same for every
+   pod, so later sessions with that model need none of this.
 
 ## Each session
 
-1. Console > Deploy > your template. Filters: H200 SXM, 4 GPUs, Secure Cloud, CUDA 13.0.
+1. Console > Deploy > the template from the one-time setup. Filters: H200 SXM, 4 GPUs, Secure Cloud, CUDA 13.0.
 2. Once the pod runs, its Connect tab shows "SSH over exposed TCP": `ssh root@<IP> -p <PORT> ...`. Then:
 
    ```bash
@@ -74,21 +89,45 @@ template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-en
    ...                a line every 30 s, and at each phase change
    14:..:..   .. min  loading <n> min | <vLLM's latest log line>
    14:..:..   .. min  ready
-   14:..:..  engine ready after .. min; opening the tunnel localhost:8000 -> pod 127.0.0.1:8000
+   14:..:..  engine ready after .. min
+
+   VS Code, once per model (its url and key are the same on every pod, so a model VS Code already has needs nothing):
+    1. Ctrl+Shift+P > Chat: Open Language Models (JSON). If the file holds just [ ], replace all of it ...
+    ...           the steps of one-time setup 4, with your key file's path
+
+   [
+     {
+       "name": "RunPod",
+       "vendor": "customendpoint",
+       "apiType": "chat-completions",
+       "models": [
+         {
+           "id": "deepseek-v41-flash",
+           "url": "http://localhost:8000/v1/chat/completions",
+           "name": "DeepSeek V4.1 Flash (RunPod)",
+           ...    the model script's other "# vscode" lines
+         }
+       ]
+     }
+   ]
+
+   14:..:..  opening the tunnel localhost:8000 -> pod 127.0.0.1:8000
    =====================================================================================================
     READY   deepseek-v41-flash at http://localhost:8000/v1   (your key accepted, test reply in <s> s)
-    VS Code: RunPod endpoint, url http://localhost:8000/v1/chat/completions, model id deepseek-v41-flash
+    VS Code: pick "DeepSeek V4.1 Flash (RunPod)" in the chat model picker (first time: the steps above).
     Keep this terminal open: it holds the tunnel and reconnects it if it drops. Ctrl-C closes it.
     The pod bills until you Terminate it in the RunPod console. Closing the tunnel does not stop it.
    =====================================================================================================
    ```
 
-3. Pick the model in VS Code. Leave the terminal open: it holds the tunnel.
+3. The first session with a model: do the VS Code steps it printed (one-time setup, step 4). Then, and in every
+   later session, pick the model in VS Code's chat model picker. Leave the terminal open: it holds the tunnel.
 4. When done: Ctrl-C, then **Terminate** the pod. A pod bills from deploy to Terminate, tunnel or not.
 
 What `launch.sh` takes care of, in order:
 
-- **Before it touches the pod:** the arguments, the API key, the SSH key, curl, and that the local port is free.
+- **Before it touches the pod:** the arguments, the model script's VS Code entry, the API key, the SSH key, curl, and
+  that the local port is free.
 - **SSH:** waits up to 15 min for the pod's sshd. A key RunPod doesn't have fails at once, saying what to fix.
 - **Start:** copies `remote/`, `models/` and the API key to the pod and starts the model script in the tmux session
   `model`.
@@ -96,6 +135,8 @@ What `launch.sh` takes care of, in order:
   model, if Hugging Face reports its size (if not, the progress line says so, and run.log why). The download is
   resumable and retried, with size, rate and (with that size) time left. Loading shows vLLM's latest log line.
 - **On failure:** prints the end of the relevant log and stops. The pod keeps what it downloaded, for a rerun.
+- **VS Code:** prints the model's entry for `chatLanguageModels.json`, from the model script's `# vscode` lines with
+  the model id the engine serves and the tunnel's url, and the steps to add it.
 - **Tunnel:** opens it, then checks it the way VS Code will use it (your key, the model id VS Code asks for, a short
   chat request). Reconnects it if it drops, and says so if the engine stops.
 
@@ -105,7 +146,7 @@ What `launch.sh` takes care of, in order:
 |---|---|
 | Tunnel closed, laptop slept, terminal gone | `./launch.sh <IP> <PORT>`: reattaches to the running model in seconds |
 | `launch.sh` reported a failure | fix the cause, then `./launch.sh <IP> <PORT>`: starts again, keeping the download |
-| Changed the vLLM flags or the API key | `RESTART=1 ./launch.sh <IP> <PORT>` |
+| Changed the vLLM flags or the API key | `RESTART=1 ./launch.sh <IP> <PORT>`; a new key: Update API Key in VS Code |
 | Another model on the same pod | `RESTART=1 ./launch.sh <IP> <PORT> <model>` |
 | Port 8000 taken on your machine | `LPORT=8001 ./launch.sh <IP> <PORT>`, and 8001 in the VS Code url |
 
@@ -120,6 +161,8 @@ your machine
   ~/.config/runpod/self-hosted-api-key   the API key
   ~/.ssh/known_hosts_runpod              pods' host keys, apart from your known_hosts: each launch replaces the
                                          entry for its IP:port (launch.sh keeps no other files: its log is the terminal)
+  VS Code's chatLanguageModels.json      the RunPod group and its models, which you paste in; the key itself is in
+                                         VS Code's secret storage (Chat: Open Language Models (JSON) opens the file)
 the pod
   /root/bootstrap.sh                     the template's bootstrap.sh, as its start command wrote it
   /root/pod/remote/, /root/pod/models/   this repo's remote/ and models/, refreshed on every launch
@@ -156,19 +199,29 @@ tmux attach -t model                  # the model script's console. Detach: Ctrl
 
 ## Adding a model
 
-Copy `models/deepseek-v41-flash.sh` to `models/<name>.sh` and change `MODEL` and the model's own `vllm_serve` flags.
-Keep `set -euo pipefail`, the `source` of `common.sh`, and the `preflight`, `download` and `vllm_serve` calls.
-`vllm_serve` adds what every model needs after the model's flags, so those win: `--host 127.0.0.1`, the port
-`launch.sh` tunnels, your API key, and the file name as the model id the engine serves. Run
-`./launch.sh <IP> <PORT> <name>`, and add `<name>` as a model id in VS Code's RunPod entry.
+Copy `models/deepseek-v41-flash.sh` to `models/<name>.sh` and change `MODEL`, the `# vscode` lines, and the model's
+own `vllm_serve` flags. Keep `set -euo pipefail`, the `source` of `common.sh`, and the `preflight`, `download` and
+`vllm_serve` calls. `vllm_serve` adds what every model needs after the model's flags, so those win: `--host
+127.0.0.1`, the port `launch.sh` tunnels, your API key, and the file name as the model id the engine serves.
+
+The `# vscode <property> <JSON value>` lines are the model's entry in VS Code's `chatLanguageModels.json`. `launch.sh`
+reads them on your machine and prints them as JSON, after the `id` (the file name) and the `url` (the tunnel's). It
+stops before it touches the pod if one that VS Code requires is missing: `name` (the label in the model picker),
+`toolCalling` (agents need it), `vision` and `maxOutputTokens`. `maxInputTokens` plus `maxOutputTokens` must fit in
+`--max-model-len`. Any other model property in VS Code's
+[reference](https://code.visualstudio.com/docs/agent-customization/language-models) works the same way, such as
+`thinking` for a model served with a reasoning parser. Values are JSON, so text goes in double quotes.
+
+Run `./launch.sh <IP> <PORT> <name>`, and add the model to VS Code's RunPod group as it prints.
 
 ## Testing a change cheaply
 
-`models/gpu-smoke-test.sh` takes the same path as a real model (preflight, download, vLLM with tool calling, then the
-tunnel and its end-to-end check) with Qwen2.5-0.5B, which fits on any GPU. To try a change to `launch.sh`, `remote/`
-or the template before paying for the large pod, deploy the template on one cheap GPU (a smaller Container Disk is
-fine) and run `./launch.sh <IP> <PORT> gpu-smoke-test`. Use 1 or 2 GPUs: the model's 14 attention heads do not split
-across 4.
+`models/gpu-smoke-test.sh` takes the same path as a real model (preflight, download, vLLM with tool calling, the VS
+Code entry, then the tunnel and its end-to-end check) with Qwen2.5-0.5B, which fits on any GPU. To try a change to
+`launch.sh`, `remote/` or the template before paying for the large pod, deploy the template on one cheap GPU (a
+smaller Container Disk is fine) and run `./launch.sh <IP> <PORT> gpu-smoke-test`. Use 1 or 2 GPUs: the model's 14
+attention heads do not split across 4. It is also a cheap way to do the VS Code steps for the first time: the RunPod
+group and the key it sets up serve every later model.
 
 ## Checking the scripts
 

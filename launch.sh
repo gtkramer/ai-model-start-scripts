@@ -4,6 +4,7 @@
 #     ./launch.sh <POD_IP> <SSH_PORT> [model]      model: a script in models/, default deepseek-v41-flash
 #
 # IP and port: the pod's Connect tab, "SSH over exposed TCP" (the proxied ssh.runpod.io login cannot forward ports).
+# Once the engine serves, it prints the model's entry for VS Code's chatLanguageModels.json and the steps to add it.
 # Rerunning is always safe: a running model is reattached, a stopped or failed one started again, keeping its download.
 # API key: ~/.config/runpod/self-hosted-api-key, the key alone on one line.
 # Env:     SSH_KEY (default ~/.ssh/id_ed25519)   LPORT (local port, default 8000)   RESTART=1 (stop the engine first)
@@ -49,6 +50,21 @@ if ! [[ "${MODEL}" =~ ^[A-Za-z0-9._-]+$ && -f "${HERE}/models/${MODEL}.sh" ]]; t
 fi
 [[ "${PORT}" =~ ^[0-9]+$ ]] || die "SSH_PORT must be a number, got '${PORT}'"
 
+# The model's entry for VS Code's chatLanguageModels.json: the model id VS Code sends (the script's name, which
+# vllm_serve serves the model as), the tunnel's url, and the script's "# vscode <property> <JSON value>" lines.
+VSCODE=("\"id\": \"${MODEL}\"" "\"url\": \"http://localhost:${LPORT}/v1/chat/completions\"")
+seen=" "
+while read -r _ _ prop value; do
+  VSCODE+=("\"${prop}\": ${value}")
+  seen+="${prop} "
+  if [[ "${prop}" == name ]]; then VSCODE_NAME="${value}"; fi
+done < <(grep '^# vscode ' "${HERE}/models/${MODEL}.sh" || true)
+for prop in name toolCalling vision maxOutputTokens; do   # the ones VS Code requires
+  if [[ "${seen}" != *" ${prop} "* ]]; then
+    die "models/${MODEL}.sh has no '# vscode ${prop} <value>' line, which VS Code needs (README: Adding a model)"
+  fi
+done
+
 if [[ ! -s "${KEYFILE}" ]]; then
   cat >&2 <<EOF
 launch: no API key at ${KEYFILE}. Create it once (README, one-time setup):
@@ -57,7 +73,7 @@ launch: no API key at ${KEYFILE}. Create it once (README, one-time setup):
   openssl rand -hex 32 > ~/.config/runpod/self-hosted-api-key
   chmod 600 ~/.config/runpod/self-hosted-api-key
 
-and give VS Code the same key for the RunPod endpoint.
+VS Code gets the same key once, in your first session: launch.sh prints the steps.
 EOF
   exit 1
 fi
@@ -189,7 +205,39 @@ while true; do
   sleep 10
 done
 
-# ---- 4. the tunnel: checked end to end, then held, reconnecting if it drops
+say "engine ready after $(( (EPOCHSECONDS - t0) / 60 )) min"
+
+# ---- 4. VS Code's entry for the model, and how to add it. Once per model: the url and key are the same on every pod.
+printf -v props '        %s,\n' "${VSCODE[@]}"
+props="${props%,$'\n'}"   # JSON: no comma after the last
+cat <<EOF
+
+VS Code, once per model (its url and key are the same on every pod, so a model VS Code already has needs nothing):
+ 1. Ctrl+Shift+P > Chat: Open Language Models (JSON). If the file holds just [ ], replace all of it with the JSON
+    below. If it lists other groups, add the RunPod group (the { } inside the outer [ ]) after a comma. If it has
+    a RunPod group already, add only the model (the { } inside "models") to that group's "models", after a comma.
+    Save the file.
+ 2. If the RunPod group is new: Ctrl+Shift+P > Chat: Manage Language Models. On the RunPod row, the gear icon >
+    Update API Key, and paste the key, which this prints: cat ${KEYFILE}
+    (Not in the file: VS Code reads its "apiKey" only as a reference into its secret storage, which this writes.)
+ 3. Once READY shows below, pick ${VSCODE_NAME} in the Chat view's model picker.
+
+[
+  {
+    "name": "RunPod",
+    "vendor": "customendpoint",
+    "apiType": "chat-completions",
+    "models": [
+      {
+${props}
+      }
+    ]
+  }
+]
+
+EOF
+
+# ---- 5. the tunnel: checked end to end, then held, reconnecting if it drops
 
 # Through the tunnel, as VS Code will: the key must be accepted, the engine must serve the model id VS Code asks for
 # (the script's name, which vllm_serve serves the model under), and the model must answer a short chat request.
@@ -220,7 +268,7 @@ check_and_watch() {
       cat <<EOF
 =====================================================================================================
  READY   ${MODEL} at http://localhost:${LPORT}/v1   (your key accepted, test reply in ${secs} s)
- VS Code: RunPod endpoint, url http://localhost:${LPORT}/v1/chat/completions, model id ${MODEL}
+ VS Code: pick ${VSCODE_NAME} in the chat model picker (first time: the steps above).
  Keep this terminal open: it holds the tunnel and reconnects it if it drops. Ctrl-C closes it.
  The pod bills until you Terminate it in the RunPod console. Closing the tunnel does not stop it.
 =====================================================================================================
@@ -242,7 +290,7 @@ EOF
   done
 }
 
-say "engine ready after $(( (EPOCHSECONDS - t0) / 60 )) min; opening the tunnel localhost:${LPORT} -> pod 127.0.0.1:${RPORT}"
+say "opening the tunnel localhost:${LPORT} -> pod 127.0.0.1:${RPORT}"
 check_and_watch 2> /dev/null &      # its messages go to stdout; stderr would only add "Terminated" on Ctrl-C
 WATCH="${!}"
 # Ctrl-C, TERM and a closed terminal become an ordinary exit, so the EXIT trap always runs. It stops the watcher,

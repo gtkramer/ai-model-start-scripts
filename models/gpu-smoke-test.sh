@@ -11,6 +11,15 @@ source "${SCRIPT_DIR}/../remote/common.sh"
 
 MODEL=Qwen/Qwen2.5-0.5B-Instruct
 
+# VS Code's entry for this model, which launch.sh prints for chatLanguageModels.json: "# vscode <property> <JSON
+# value>" lines, read on your machine (README, "Adding a model"). The token limits must fit in --max-model-len,
+# here the model's maximum, 32768: VS Code's chat and agent prompts alone take more than a few thousand tokens.
+# vscode name            "GPU smoke test: Qwen2.5 0.5B (RunPod)"
+# vscode toolCalling     true
+# vscode vision          false
+# vscode maxInputTokens  28672
+# vscode maxOutputTokens 4096
+
 preflight
 TP="${GPUS}"
 download "${MODEL}"
@@ -21,5 +30,5 @@ vllm_serve "${MODEL}" \
   --tensor-parallel-size "${TP}" \
   --enable-auto-tool-choice \
   --tool-call-parser hermes \
-  --max-model-len 4096 \
+  --max-model-len 32768 \
   --gpu-memory-utilization 0.85
