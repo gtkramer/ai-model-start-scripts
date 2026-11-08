@@ -10,7 +10,7 @@ SSH tunnel from `localhost:8000` to the engine for VS Code.
 ```
 launch.sh                     local, once per session: sets up the pod, reports progress, holds the tunnel
 remote/common.sh              pod side: preflight, download, serve; sourced by every model script
-remote/container-env.sh       pod side: the container's environment (vllm, hf, CUDA) for SSH shells and the model
+remote/container-env.sh       pod side: the image's CUDA/vLLM and RunPod variables, for SSH shells and the model
 remote/deepseek-v41-flash.sh  DeepSeek-V4.1-Flash-1017: the settled vLLM command, TP = GPU count
 template/bootstrap.sh         the template's Container Start Command: SSH only, the same for every model
 template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-encoded so pasting cannot mangle it
@@ -129,11 +129,12 @@ has neither (Volume Disk `0`). Everything is on the container disk, the pod's ow
 Container Disk (650 GB) sizes. RunPod erases it when the pod stops, and Terminate deletes it with the pod: nothing,
 logs included, outlives a session.
 
-SSH sessions don't inherit the container's environment: sshd starts each one with a minimal PATH, without the
-image's `vllm`, `hf` and CUDA variables. `remote/container-env.sh` imports it from the container's first process, and
-is the one place that does: `common.sh` sources it for the model script, and the `/etc/profile.d` link applies it to
-your SSH logins and to new tmux windows. A one-off `ssh <pod> <command>` is not a login shell and doesn't get it:
-log in, or run `. /etc/profile.d/container-env.sh` first.
+SSH sessions don't inherit the container's environment: sshd builds a fresh one for each. `vllm` and `hf` still run
+(they are in `/usr/local/bin`), but without the rest of what the image sets: its CUDA paths (`PATH`, `LD_LIBRARY_PATH`,
+`CUDA_HOME`), its `NVIDIA_*` and `VLLM_*` variables, and RunPod's `RUNPOD_*` ones. `remote/container-env.sh` imports
+the environment from the container's first process, and is the one place that does: `common.sh` sources it for the
+model script, and the `/etc/profile.d` link applies it to your SSH logins and to new tmux windows. A one-off
+`ssh <pod> <command>` is not a login shell and doesn't get it: log in, or run `. /etc/profile.d/container-env.sh` first.
 
 ## When something goes wrong
 

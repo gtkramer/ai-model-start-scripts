@@ -118,7 +118,7 @@ until out="$(pod true 2>&1)"; do
 done
 
 # ---- 2. copy remote/ to /root/pod/scripts and the keys to /root/pod, then start the model script in tmux, or find it already running
-# The profile.d link gives your SSH logins the container's environment (vllm, hf, CUDA), as common.sh does the model's.
+# The profile.d link gives your SSH logins the container's environment, as common.sh does the model's (README).
 say "pod reachable; copying remote/ and the API key"
 tar -C "${HERE}/remote" -cf - . | pod 'set -euo pipefail
   mkdir -p /root/pod/scripts
@@ -206,7 +206,8 @@ done
 # ---- 4. the tunnel: checked end to end, then held, reconnecting if it drops
 
 # Through the tunnel, as VS Code will: the key must be accepted and the model must answer a short chat request.
-# Afterwards, keep an eye on the engine and say so if it stops.
+# Afterwards, keep an eye on the engine and say so if it stops. The advice to restart starts with Ctrl-C: while this
+# script holds the local port, a second launch.sh would stop at its port check.
 check_and_watch() {
   local out code model="" res secs was s i auth="Authorization: Bearer ${API_KEY}"
   for (( i = 0; i < 30; i++ )); do
@@ -217,7 +218,7 @@ check_and_watch() {
   code="${out##*$'\n'}"
   case "${code}" in
     200) model="$(grep -o '"id": *"[^"]*"' <<< "${out}" | grep -v '"modelperm-' | head -n 1 | cut -d '"' -f 4)" || true ;;
-    401) say "!! the engine rejects the key in ${KEYFILE}: it was started with another one. To restart it with yours: RESTART=1 ${0} ${IP} ${PORT} ${MODEL}" ;;
+    401) say "!! the engine rejects the key in ${KEYFILE}: it was started with another one. To restart it with yours: Ctrl-C here, then RESTART=1 ${0} ${IP} ${PORT} ${MODEL}" ;;
     *)   say "!! GET /v1/models through the tunnel failed (HTTP ${code:-none})" ;;
   esac
   if [[ -n "${model}" ]]; then
@@ -246,7 +247,7 @@ EOF
     if [[ "${s}" == ready ]]; then
       say "engine on the pod is ready again"
     else
-      say "!! engine on the pod: ${s}. Rerun this command to restart it."
+      say "!! engine on the pod: ${s}. To restart it: Ctrl-C here, then ${0} ${IP} ${PORT} ${MODEL}"
     fi
   done
 }

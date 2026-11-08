@@ -38,8 +38,8 @@ status()   { progress "${1}"; log "STATUS: ${1}"; }
 die()      { status "failed: ${1}"; exit 1; }
 nap()      { sleep "${1}" & wait "${!}"; }      # a sleep that a signal (tmux kill-session) interrupts at once
 
-# The tmux session runs under an SSH login, which does not inherit the container's environment (vllm on PATH, the
-# image's CUDA variables): import it, the same way your SSH logins get it.
+# The tmux session runs under an SSH login, which does not inherit the container's environment (the image's CUDA
+# paths and variables, RunPod's RUNPOD_* ones): import it, the same way your SSH logins get it.
 COMMON_DIR="$(dirname "${BASH_SOURCE[0]}")"
 # shellcheck source-path=SCRIPTDIR source=container-env.sh
 source "${COMMON_DIR}/container-env.sh"

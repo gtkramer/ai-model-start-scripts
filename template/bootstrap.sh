@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # RunPod "Container Start Command" for vllm/vllm-openai images. One job: make the pod reachable over SSH.
 # Everything model-specific lives in remote/ and is pushed after launch by launch.sh, so this rarely changes.
-# That includes the container environment (vllm on PATH, CUDA variables), which SSH sessions do not inherit:
+# That includes the container's environment (the image's CUDA and vLLM settings), which SSH sessions do not inherit:
 # remote/common.sh imports it for the model script.
 # Install into the template with ./make-start-cmd.sh, which prints the JSON the template field takes.
 # Progress appears in the pod's logs (RunPod console > Pod > Logs) as BOOTSTRAP lines.
