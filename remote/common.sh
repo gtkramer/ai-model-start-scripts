@@ -1,19 +1,19 @@
 # shellcheck shell=bash
 # Shared helpers for model scripts. Every model script has the same shape:
 #     set -euo pipefail
-#     source "${dir}/../remote/common.sh"   # model scripts are in models/, next to remote/ (the same on the pod)
-#     preflight                          # status, hardware report, CUDA check, API key; sets ${GPUS}
-#     download <hf-repo> [hf args...]    # resumable, retried, disk-checked, progress in STATUS
+#     source "$(dirname "${0}")/../remote/common.sh"   # models/ is next to remote/, in the repo and on the pod
+#     preflight                          # stop handling, hardware report, tool/CUDA checks, API key; sets ${GPUS}
+#     download <hf-repo> [hf args...]    # resumable, retried, disk-checked if the size is known; progress in STATUS
 #     vllm_serve <hf-repo> [flags...]    # vllm serve with the model's flags plus the ones every model needs
 # vllm_serve is serve <engine command...> (start it, wait until it answers, stay attached to it) for vLLM.
 #
-# Everything of ours on the pod is in /root/pod (the container disk: there is no /workspace volume, and nothing
-# outlives the pod). launch.sh writes remote/, models/, api-key and hf-token, and starts the model script; the rest
-# is here:
+# Our files on the pod are in /root/pod, apart from the weights (below), /root/bootstrap.sh and the /etc/profile.d
+# link (README). That is the container disk: there is no /workspace volume, and nothing outlives the pod. launch.sh
+# writes remote/, models/, model, api-key and hf-token, and starts the model script; the rest is written here:
 #     /root/pod/status        one line, polled by launch.sh:
-#                             booting | downloading ... | loading ... | ready | stopped | failed: <reason> (see <log>)
+#                             booting | downloading ... | loading ... | ready | stopped | failed: <reason> [(see <log>)]
 #     /root/pod/logs/         run.log (phases, timings), download.log, vllm.log (previous run: vllm.prev.log)
-#     /root/pod/model.pgid    this run's process group, which launch.sh stops before starting another run
+#     /root/pod/model.pgid    this run's process group: launch.sh waits until it is gone before another run
 # Model weights stay in the Hugging Face default cache, /root/.cache/huggingface, where vllm and hf look for them.
 #
 # Written for the model scripts' `set -euo pipefail`; as a sourced library it leaves shell options to its caller.
@@ -41,8 +41,8 @@ status()   { progress "${1}"; log "STATUS: ${1}"; }
 die()      { status "failed: ${1}"; exit 1; }
 nap()      { sleep "${1}" & wait "${!}"; }      # a sleep that a signal (tmux kill-session) interrupts at once
 
-# The tmux session runs under an SSH login, which does not inherit the container's environment (the image's CUDA
-# paths and variables, RunPod's RUNPOD_* ones): import it, the same way your SSH logins get it.
+# launch.sh starts the tmux session with a one-off ssh command, not a login shell, so the model script does not get
+# the container's environment (the image's CUDA paths and variables, RunPod's RUNPOD_* ones): import it, as logins do.
 COMMON_DIR="$(dirname "${BASH_SOURCE[0]}")"
 # shellcheck source-path=SCRIPTDIR source=container-env.sh
 source "${COMMON_DIR}/container-env.sh"
@@ -89,7 +89,7 @@ stop_run() {
   exit 0
 }
 
-# preflight: everything that would otherwise fail late (after a long download) fails here, in seconds.
+# preflight: what can be checked before a long download (GPUs, tools, CUDA, the API key) fails here, in seconds.
 preflight() {
   status booting
   read_pgid
@@ -155,8 +155,10 @@ dir_bytes() {
   echo "${out%%[[:space:]]*}"
 }
 
-# download <hf-repo> [extra `hf download` args]: idempotent (a rerun fetches only what is missing), retried 3 times.
-# STATUS shows size, rate and time left. With no extra args it first checks that the repo fits on the disk.
+# download <hf-repo> [extra `hf download` args]: idempotent (a rerun fetches only what is missing), tried up to 3
+# times. STATUS shows size and rate. With no extra args (which may select part of the repo), it first asks the Hub
+# for the repo's size: then it checks that the rest fits on the disk, and STATUS also shows the total and time left.
+# If the Hub cannot say, both are skipped.
 download() {
   local repo="${1}"
   shift

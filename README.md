@@ -3,9 +3,9 @@
 Run an open-weights model on a rented RunPod GPU pod for one session, then throw the pod away. Nothing persists on
 RunPod between sessions (no volume, no secrets), so the only cost is the time a pod runs.
 
-The RunPod template is generic: it only brings up SSH. Everything model-specific lives here and is pushed to the pod
-by `launch.sh`, which also downloads and starts the model, follows it until it serves, and then holds a verified
-SSH tunnel from `localhost:8000` to the engine for VS Code.
+The RunPod template is generic: it only brings up SSH, and installs tmux for `launch.sh`. Everything model-specific
+lives here and is pushed to the pod by `launch.sh`, which also downloads and starts the model, follows it until it
+serves, and then holds a verified SSH tunnel from `localhost:8000` to the engine for VS Code.
 
 ```
 launch.sh                     local, once per session: sets up the pod, reports progress, holds the tunnel
@@ -13,9 +13,10 @@ models/deepseek-v41-flash.sh  DeepSeek-V4.1-Flash-1017: the settled vLLM command
 models/gpu-smoke-test.sh      a 0.5B model with tool calling: the whole path on a cheap pod, before a large one
 remote/common.sh              pod side: preflight, download, vllm_serve; sourced by every model script
 remote/container-env.sh       pod side: the image's CUDA/vLLM and RunPod variables, for SSH shells and the model
-template/bootstrap.sh         the template's Container Start Command: SSH only, the same for every model
+template/bootstrap.sh         the template's Container Start Command: sshd and tmux, the same for every model
 template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-encoded so pasting cannot mangle it
-.shellcheckrc                 ShellCheck with every optional check on (see "Checking the scripts")
+.shellcheckrc                 ShellCheck: every optional check on but SC2310 (see "Checking the scripts")
+.gitattributes                LF line endings for the scripts, which CRLF would break
 ```
 
 ## One-time setup
@@ -67,8 +68,9 @@ template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-en
    14:02:11  waiting for the pod's sshd (Connection refused)
    14:03:02  pod reachable; copying remote/, models/ and the API key
    14:03:03  started models/deepseek-v41-flash.sh on the pod (tmux session 'model')
-   14:03:03    0 min  downloading deepseek-ai/DeepSeek-V4.1-Flash-1017
-   14:03:33    0 min  downloading <done>/<total> GB at <rate> MB/s, ~<n> min left
+   14:03:05    0 min  booting
+   14:03:15    0 min  downloading deepseek-ai/DeepSeek-V4.1-Flash-1017
+   14:03:45    0 min  downloading <done>/<total> GB at <rate> MB/s, ~<n> min left
    ...                a line every 30 s, and at each phase change
    14:..:..   .. min  loading <n> min | <vLLM's latest log line>
    14:..:..   .. min  ready
@@ -86,12 +88,13 @@ template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-en
 
 What `launch.sh` takes care of, in order:
 
-- **Before it touches the pod:** the API key, the SSH key, and that the local port is free.
+- **Before it touches the pod:** the arguments, the API key, the SSH key, curl, and that the local port is free.
 - **SSH:** waits up to 15 min for the pod's sshd. A key RunPod doesn't have fails at once, saying what to fix.
 - **Start:** copies `remote/`, `models/` and the API key to the pod and starts the model script in the tmux session
   `model`.
 - **On the pod, before the download:** GPUs visible, CUDA usable with this host's driver, and enough disk for the
-  model. The download is resumable and retried, with size, rate and time left. Loading shows vLLM's latest log line.
+  model, if Hugging Face reports its size. The download is resumable and retried, with size, rate and (with that
+  size) time left. Loading shows vLLM's latest log line.
 - **On failure:** prints the end of the relevant log and stops. The pod keeps what it downloaded, for a rerun.
 - **Tunnel:** opens it, then checks it the way VS Code will use it (model list with your key, a short chat
   request). Reconnects it if it drops, and says so if the engine stops.
@@ -106,22 +109,24 @@ What `launch.sh` takes care of, in order:
 | Another model on the same pod | `RESTART=1 ./launch.sh <IP> <PORT> <model>` |
 | Port 8000 taken on your machine | `LPORT=8001 ./launch.sh <IP> <PORT>`, and 8001 in the VS Code url |
 
-`SSH_KEY=<private key>` picks another key than `~/.ssh/id_ed25519`. `HF_TOKEN=hf_...` in your environment is passed
-on to the pod for Hugging Face downloads (not needed for DeepSeek; gated models need one).
+`SSH_KEY=<private key>` picks another key than `~/.ssh/id_ed25519`, and `API_KEY_FILE=<file>` another API key file
+than `~/.config/runpod/self-hosted-api-key`. `HF_TOKEN=hf_...` in your environment is passed on to the pod for
+Hugging Face downloads (not needed for DeepSeek; gated models need one).
 
 ## Where things live
 
 ```
 your machine
   ~/.config/runpod/self-hosted-api-key   the API key
-  ~/.ssh/known_hosts_runpod              pods' host keys, apart from your known_hosts; replaced on every launch
-                                         (launch.sh keeps no other files: its log is the terminal)
+  ~/.ssh/known_hosts_runpod              pods' host keys, apart from your known_hosts: each launch replaces the
+                                         entry for its IP:port (launch.sh keeps no other files: its log is the terminal)
 the pod
+  /root/bootstrap.sh                     the template's bootstrap.sh, as its start command wrote it
   /root/pod/remote/, /root/pod/models/   this repo's remote/ and models/, refreshed on every launch
   /root/pod/logs/                        run.log (phases, timings), download.log, vllm.log, vllm.prev.log
   /root/pod/status                       the current phase, which launch.sh polls
   /root/pod/api-key, hf-token            written by launch.sh, mode 600
-  /root/pod/model, model.pgid            what is running, and its process group (for RESTART=1)
+  /root/pod/model, model.pgid            the last model started and its process group, read by launch.sh before a start
   /etc/profile.d/container-env.sh        link to remote/container-env.sh, made by launch.sh: see below
   /root/.cache/huggingface/              the model weights: Hugging Face's default cache, where hf and vllm look
 ```
@@ -167,8 +172,8 @@ across 4.
 
 ## Checking the scripts
 
-All scripts must pass [ShellCheck](https://www.shellcheck.net/) with every optional check on, which `.shellcheckrc`
-sets (editors with a ShellCheck extension pick it up). From the repo root:
+All scripts must pass [ShellCheck](https://www.shellcheck.net/) with every optional check on but SC2310 (the file
+says why), which `.shellcheckrc` sets (editors with a ShellCheck extension pick it up). From the repo root:
 
 ```bash
 shellcheck launch.sh models/*.sh remote/*.sh template/*.sh
@@ -180,15 +185,16 @@ The conventions it enforces, and the ones it can't see:
   the code `launch.sh` runs on the pod. The exceptions are where quotes would change the meaning: names inside
   `(( ))` and `$(( ))` (written bare, `(( total > avail ))`), the regex on the right of `=~`, and heredoc text.
 - Tests use `[[ ]]` and `(( ))`. The exception is the first test in `remote/container-env.sh`, which plain `sh` must parse.
-- Scripts that are run set `set -euo pipefail`. A command that may fail without that being an error says how it is
-  handled (`|| true`, `|| <fallback>`). Sourced files (`common.sh`, `container-env.sh`) set no options and work under
-  these. `template/bootstrap.sh` is the exception: `-u` and `pipefail` but not `-e`, so that it always reaches
-  `sleep infinity` and the pod stays reachable.
-- `launch.sh` needs bash 5 or newer (`EPOCHSECONDS`, `printf '%(...)T'`).
+- Scripts that are run, and the code `launch.sh` runs on the pod, set `set -euo pipefail`. A command that may fail
+  without that being an error says how it is handled (in a condition, `|| true`, `|| <fallback>`). Sourced files
+  (`common.sh`, `container-env.sh`) set no options and work under these. `template/bootstrap.sh` is the exception:
+  `-u` and `pipefail` but not `-e`, so that it always reaches `sleep infinity` and the pod stays reachable.
+- `launch.sh` needs bash 5 or newer, for `EPOCHSECONDS`.
 
 ## Changing the template
 
-`template/bootstrap.sh` only makes the pod reachable, so it seldom changes. After editing it, paste the new output of
-`template/make-start-cmd.sh` into the template's Container Start Command; pods deploy with the new one from then on.
-On the pod the script runs as `/root/bootstrap.sh`, so line numbers in an error in the pod's logs match
-`template/bootstrap.sh`.
+`template/bootstrap.sh` only makes the pod reachable (sshd, and tmux for `launch.sh`), so it seldom changes. After
+editing it, paste the new output of `template/make-start-cmd.sh` into the template's Container Start Command; pods
+deploy with the new one from then on. On the pod the script runs as `/root/bootstrap.sh`, so line numbers in an error
+in the pod's logs match `template/bootstrap.sh`. Rewording comment lines, without adding or removing any, leaves the
+output the same.

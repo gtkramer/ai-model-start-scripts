@@ -17,7 +17,7 @@
 #          HF_TOKEN (passed on for Hugging Face downloads, if set)   API_KEY_FILE (another key file)
 #
 # Commands that may fail without that being an error (the pod not up yet, a grep that finds nothing, the tunnel
-# dropping) say how they are handled, with `|| true` or `|| <fallback>`; anything else failing stops the script.
+# dropping) say how they are handled (a loop condition, `|| true`, `|| <fallback>`); anything else stops the script.
 # shellcheck disable=SC2016,SC2029  # remote commands: '...' expands on the pod, "..." here, each on purpose
 set -euo pipefail
 if (( BASH_VERSINFO[0] < 5 )); then
@@ -126,7 +126,8 @@ printf '%s\n%s\n' "${API_KEY}" "${HF_TOKEN:-}" | pod 'set -euo pipefail
   if [[ -n "${t}" ]]; then printf %s "${t}" > /root/pod/hf-token; else rm -f /root/pod/hf-token; fi' \
   || die "could not write the API key on the pod"
 
-# Prints one word for the case below; anything else (or nothing) is a failure, reported with what it printed.
+# Prints one line for the case below: started, running <model> or no-tmux. Anything else (or nothing) is a failure,
+# reported with what it printed.
 started="$(pod bash -s -- "${MODEL}" "${RESTART:-0}" <<'EOF'
 set -euo pipefail
 model="${1}" restart="${2}"
@@ -139,7 +140,8 @@ if tmux has-session -t model 2> /dev/null; then
 fi
 # Nothing in tmux. No process of the last run may still hold the GPUs or the port. Stopping a run is its script's
 # job (stop_run in remote/common.sh ends all of it within about 60 s), so while that script lives this only waits.
-# The script leads the run's process group: if it is gone (killed outright), what it left is asked to go here.
+# The script leads the run's process group. If it is gone (it failed, or was killed outright), anything it left
+# behind is asked to go here.
 pg="$(cat /root/pod/model.pgid 2> /dev/null)" || pg=""
 if [[ -n "${pg}" ]]; then
   if ! kill -0 "${pg}" 2> /dev/null; then kill -TERM -- "-${pg}" 2> /dev/null || true; fi
@@ -165,7 +167,8 @@ esac
 
 # ---- 3. follow the model script until the engine answers
 # On the pod: the status line, or a failure if the tmux session is gone without having said why.
-POD_STATUS='s="$(cat /root/pod/status 2> /dev/null)" || s=""
+POD_STATUS='set -euo pipefail
+s="$(cat /root/pod/status 2> /dev/null)" || s=""
 if ! tmux has-session -t model 2> /dev/null; then
   case "${s}" in
     failed:*) ;;

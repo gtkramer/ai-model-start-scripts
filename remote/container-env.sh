@@ -22,6 +22,7 @@ fi
 container_env_import() {
   local kv
   while IFS= read -r -d '' kv; do
+    # Not imported: what each shell sets for itself, and PUBLIC_KEY, which only bootstrap.sh uses.
     case "${kv%%=*}" in
       HOME | PWD | OLDPWD | SHLVL | TERM | HOSTNAME | PUBLIC_KEY | _) ;;
       *) export "${kv?}" 2> /dev/null || true ;;   # a name bash cannot hold is skipped
