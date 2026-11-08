@@ -21,5 +21,8 @@ done
 mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh
 echo "$PUBLIC_KEY" >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys     # RunPod injects PUBLIC_KEY
 
+# Host keys: installing openssh-server in a container does not always generate them, and sshd will not start
+# without. -A creates whichever are missing, and leaves existing ones alone.
+ssh-keygen -A
 if /usr/sbin/sshd; then echo "BOOTSTRAP: ssh ready"; else echo "BOOTSTRAP: sshd failed to start"; fi
 sleep infinity   # never exit: an exited container cannot be reached
