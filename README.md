@@ -1,4 +1,4 @@
-# ai-model-start-scripts
+# AI Model Start Scripts
 
 Run an open-weights model on a rented RunPod GPU pod for one session, then throw the pod away. Nothing persists on
 RunPod between sessions (no volume, no secrets), so the only cost is the time a pod runs.
@@ -93,11 +93,11 @@ What `launch.sh` takes care of, in order:
 - **Start:** copies `remote/`, `models/` and the API key to the pod and starts the model script in the tmux session
   `model`.
 - **On the pod, before the download:** GPUs visible, CUDA usable with this host's driver, and enough disk for the
-  model, if Hugging Face reports its size. The download is resumable and retried, with size, rate and (with that
-  size) time left. Loading shows vLLM's latest log line.
+  model, if Hugging Face reports its size (if not, the progress line says so, and run.log why). The download is
+  resumable and retried, with size, rate and (with that size) time left. Loading shows vLLM's latest log line.
 - **On failure:** prints the end of the relevant log and stops. The pod keeps what it downloaded, for a rerun.
-- **Tunnel:** opens it, then checks it the way VS Code will use it (model list with your key, a short chat
-  request). Reconnects it if it drops, and says so if the engine stops.
+- **Tunnel:** opens it, then checks it the way VS Code will use it (your key, the model id VS Code asks for, a short
+  chat request). Reconnects it if it drops, and says so if the engine stops.
 
 ## Reconnecting, retrying, restarting
 

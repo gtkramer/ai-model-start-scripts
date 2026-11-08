@@ -136,12 +136,18 @@ EOF
   API_KEY="$(< "${POD}/api-key")"
 }
 
-# repo_bytes <hf-repo>: total size of the repo's files; fails if the Hub cannot say.
+# repo_bytes <hf-repo>: total size of the repo's files. If the Hub cannot say, it fails and prints why, on one line
+# without Hugging Face's request id (or prints nothing, if there is no answer within 60 s).
 repo_bytes() {
   timeout 60 python3 - "${1}" 2> /dev/null <<'EOF'
-import sys
-from huggingface_hub import HfApi
-info = HfApi().model_info(sys.argv[1], files_metadata=True)
+import re, sys
+try:
+    from huggingface_hub import HfApi
+    info = HfApi().model_info(sys.argv[1], files_metadata=True)
+except Exception as e:
+    reason = " ".join(re.sub(r" ?\(Request ID: [^)]*\)", "", str(e)).split())
+    print(f"{type(e).__name__}: {reason}"[:200])
+    sys.exit(1)
 print(sum(f.size or 0 for f in info.siblings or []))
 EOF
 }
@@ -156,7 +162,7 @@ dir_bytes() {
 # download <hf-repo> [extra `hf download` args]: idempotent (a rerun fetches only what is missing), tried up to 3
 # times. STATUS shows size and rate. With no extra args (which may select part of the repo), it first asks the Hub
 # for the repo's size: then it checks that the rest fits on the disk, and STATUS also shows the total and time left.
-# If the Hub cannot say, both are skipped.
+# Without the size, both are skipped, and STATUS says so; if the Hub could not say, run.log has its reason.
 download() {
   local repo="${1}"
   shift
@@ -165,8 +171,9 @@ download() {
   mkdir -p "${dir}"
   export HF_XET_HIGH_PERFORMANCE=1   # hf-xet's high-performance mode: more bandwidth and CPU (hf_transfer's successor)
   status "downloading ${repo}"
-  if (( ${#} == 0 )); then
-    total="$(repo_bytes "${repo}")" || total=""
+  if (( ${#} == 0 )) && ! total="$(repo_bytes "${repo}")"; then
+    log "WARNING: no size for ${repo} from Hugging Face (${total:-no answer in 60 s}): no disk check, no time left"
+    total=""
   fi
   start="$(dir_bytes "${dir}")"
   if [[ -n "${total}" ]]; then
@@ -196,6 +203,7 @@ download() {
           msg+=", ~$(( (total - now) / rate / 60 + 1 )) min left"
         fi
       fi
+      if [[ -z "${total}" ]]; then msg+="; size unknown: disk not checked"; fi
       progress "${msg}"
     done
     if wait "${pid}"; then

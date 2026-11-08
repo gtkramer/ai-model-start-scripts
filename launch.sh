@@ -191,33 +191,36 @@ done
 
 # ---- 4. the tunnel: checked end to end, then held, reconnecting if it drops
 
-# Through the tunnel, as VS Code will: the key must be accepted and the model must answer a short chat request.
+# Through the tunnel, as VS Code will: the key must be accepted, the engine must serve the model id VS Code asks for
+# (the script's name, which vllm_serve serves the model under), and the model must answer a short chat request.
 # Afterwards, keep an eye on the engine and say so if it stops. The advice to restart starts with Ctrl-C: while this
 # script holds the local port, a second launch.sh would stop at its port check.
 check_and_watch() {
-  local out code model="" res secs was s i auth="Authorization: Bearer ${API_KEY}"
+  local out code body res secs was s i auth="Authorization: Bearer ${API_KEY}"
   for (( i = 0; i < 30; i++ )); do
     if port_in_use "${LPORT}"; then break; fi
     sleep 1
   done
   out="$(curl -s -m 15 -H "${auth}" -w '\n%{http_code}' "http://127.0.0.1:${LPORT}/v1/models")" || true
   code="${out##*$'\n'}"
-  # The model's id is the list's first "id"; the ids starting "modelperm-" are those of its permission entries.
+  body="${out%$'\n'*}"
   case "${code}" in
-    200) model="$(grep -o '"id": *"[^"]*"' <<< "${out}" | grep -v '"modelperm-' | head -n 1 | cut -d '"' -f 4)" || true ;;
+    200) ;;
     401) say "!! the engine rejects the key in ${KEYFILE}: it was started with another one. To restart it with yours: Ctrl-C here, then RESTART=1 ${0} ${IP} ${PORT} ${MODEL}" ;;
     *)   say "!! GET /v1/models through the tunnel failed (HTTP ${code:-none})" ;;
   esac
-  if [[ -n "${model}" ]]; then
+  if [[ "${code}" == 200 && "${body}" != *"\"${MODEL}\""* ]]; then
+    say "!! the engine does not serve the model id ${MODEL}, which VS Code asks for. GET /v1/models: ${body:0:200}"
+  elif [[ "${code}" == 200 ]]; then
     res="$(curl -s -m 300 -o /dev/null -w '%{http_code} %{time_total}' -H "${auth}" -H 'Content-Type: application/json' \
-          -d "{\"model\":\"${model}\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with one word: ready\"}],\"max_tokens\":16}" \
+          -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with one word: ready\"}],\"max_tokens\":16}" \
           "http://127.0.0.1:${LPORT}/v1/chat/completions")" || true
     if [[ "${res%% *}" == 200 ]]; then
       LC_ALL=C printf -v secs '%.1f' "${res#* }"   # curl's "0.612" is not a number to a decimal-comma locale
       cat <<EOF
 =====================================================================================================
- READY   ${model} at http://localhost:${LPORT}/v1   (your key accepted, test reply in ${secs} s)
- VS Code: RunPod endpoint, url http://localhost:${LPORT}/v1/chat/completions, model id ${model}
+ READY   ${MODEL} at http://localhost:${LPORT}/v1   (your key accepted, test reply in ${secs} s)
+ VS Code: RunPod endpoint, url http://localhost:${LPORT}/v1/chat/completions, model id ${MODEL}
  Keep this terminal open: it holds the tunnel and reconnects it if it drops. Ctrl-C closes it.
  The pod bills until you Terminate it in the RunPod console. Closing the tunnel does not stop it.
 =====================================================================================================
