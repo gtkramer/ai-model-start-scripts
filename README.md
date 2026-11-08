@@ -9,9 +9,10 @@ SSH tunnel from `localhost:8000` to the engine for VS Code.
 
 ```
 launch.sh                     local, once per session: sets up the pod, reports progress, holds the tunnel
-remote/common.sh              pod side: preflight, download, serve; sourced by every model script
+models/deepseek-v41-flash.sh  DeepSeek-V4.1-Flash-1017: the settled vLLM command, TP = GPU count
+models/gpu-smoke-test.sh      a 0.5B model with tool calling: the whole path on a cheap pod, before a large one
+remote/common.sh              pod side: preflight, download, vllm_serve; sourced by every model script
 remote/container-env.sh       pod side: the image's CUDA/vLLM and RunPod variables, for SSH shells and the model
-remote/deepseek-v41-flash.sh  DeepSeek-V4.1-Flash-1017: the settled vLLM command, TP = GPU count
 template/bootstrap.sh         the template's Container Start Command: SSH only, the same for every model
 template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-encoded so pasting cannot mangle it
 .shellcheckrc                 ShellCheck with every optional check on (see "Checking the scripts")
@@ -64,8 +65,8 @@ template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-en
 
    ```
    14:02:11  waiting for the pod's sshd (Connection refused)
-   14:03:02  pod reachable; copying remote/ and the API key
-   14:03:03  started remote/deepseek-v41-flash.sh on the pod (tmux session 'model')
+   14:03:02  pod reachable; copying remote/, models/ and the API key
+   14:03:03  started models/deepseek-v41-flash.sh on the pod (tmux session 'model')
    14:03:03    0 min  downloading deepseek-ai/DeepSeek-V4.1-Flash-1017
    14:03:33    0 min  downloading <done>/<total> GB at <rate> MB/s, ~<n> min left
    ...                a line every 30 s, and at each phase change
@@ -87,7 +88,8 @@ What `launch.sh` takes care of, in order:
 
 - **Before it touches the pod:** the API key, the SSH key, and that the local port is free.
 - **SSH:** waits up to 15 min for the pod's sshd. A key RunPod doesn't have fails at once, saying what to fix.
-- **Start:** copies `remote/` and the API key to the pod and starts the model script in the tmux session `model`.
+- **Start:** copies `remote/`, `models/` and the API key to the pod and starts the model script in the tmux session
+  `model`.
 - **On the pod, before the download:** GPUs visible, CUDA usable with this host's driver, and enough disk for the
   model. The download is resumable and retried, with size, rate and time left. Loading shows vLLM's latest log line.
 - **On failure:** prints the end of the relevant log and stops. The pod keeps what it downloaded, for a rerun.
@@ -115,12 +117,12 @@ your machine
   ~/.ssh/known_hosts_runpod              pods' host keys, apart from your known_hosts; replaced on every launch
                                          (launch.sh keeps no other files: its log is the terminal)
 the pod
-  /root/pod/scripts/                     this repo's remote/, refreshed on every launch
+  /root/pod/remote/, /root/pod/models/   this repo's remote/ and models/, refreshed on every launch
   /root/pod/logs/                        run.log (phases, timings), download.log, vllm.log, vllm.prev.log
   /root/pod/status                       the current phase, which launch.sh polls
   /root/pod/api-key, hf-token            written by launch.sh, mode 600
   /root/pod/model, model.pgid            what is running, and its process group (for RESTART=1)
-  /etc/profile.d/container-env.sh        link to scripts/container-env.sh, made by launch.sh: see below
+  /etc/profile.d/container-env.sh        link to remote/container-env.sh, made by launch.sh: see below
   /root/.cache/huggingface/              the model weights: Hugging Face's default cache, where hf and vllm look
 ```
 
@@ -149,11 +151,19 @@ tmux attach -t model                  # the model script's console. Detach: Ctrl
 
 ## Adding a model
 
-Copy `remote/deepseek-v41-flash.sh` to `remote/<name>.sh` (any name but `common` or `container-env`) and change
-`MODEL` and the model's own `vllm_serve` flags. Keep `set -euo pipefail`, the `source` of `common.sh`, and the
-`preflight`, `download` and `vllm_serve` calls. `vllm_serve` adds what every model needs after the model's flags, so
-those win: `--host 127.0.0.1`, the port `launch.sh` tunnels, your API key, and the file name as the model id the
-engine serves. Run `./launch.sh <IP> <PORT> <name>`, and add `<name>` as a model id in VS Code's RunPod entry.
+Copy `models/deepseek-v41-flash.sh` to `models/<name>.sh` and change `MODEL` and the model's own `vllm_serve` flags.
+Keep `set -euo pipefail`, the `source` of `common.sh`, and the `preflight`, `download` and `vllm_serve` calls.
+`vllm_serve` adds what every model needs after the model's flags, so those win: `--host 127.0.0.1`, the port
+`launch.sh` tunnels, your API key, and the file name as the model id the engine serves. Run
+`./launch.sh <IP> <PORT> <name>`, and add `<name>` as a model id in VS Code's RunPod entry.
+
+## Testing a change cheaply
+
+`models/gpu-smoke-test.sh` takes the same path as a real model (preflight, download, vLLM with tool calling, then the
+tunnel and its end-to-end check) with Qwen2.5-0.5B, which fits on any GPU. To try a change to `launch.sh`, `remote/`
+or the template before paying for the large pod, deploy the template on one cheap GPU (a smaller Container Disk is
+fine) and run `./launch.sh <IP> <PORT> gpu-smoke-test`. Use 1 or 2 GPUs: the model's 14 attention heads do not split
+across 4.
 
 ## Checking the scripts
 
@@ -161,7 +171,7 @@ All scripts must pass [ShellCheck](https://www.shellcheck.net/) with every optio
 sets (editors with a ShellCheck extension pick it up). From the repo root:
 
 ```bash
-shellcheck launch.sh remote/*.sh template/*.sh
+shellcheck launch.sh models/*.sh remote/*.sh template/*.sh
 ```
 
 The conventions it enforces, and the ones it can't see:

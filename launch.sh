@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Run on your machine once a pod from the template is up (see README):
 #
-#     ./launch.sh <POD_IP> <SSH_PORT> [model]      model: a script in remote/, default deepseek-v41-flash
+#     ./launch.sh <POD_IP> <SSH_PORT> [model]      model: a script in models/, default deepseek-v41-flash
 #
 # IP and port: the pod's Connect tab, "SSH over exposed TCP" (the proxied ssh.runpod.io login cannot forward ports).
-# Waits for the pod's sshd, copies remote/ and your API key there, starts the model script in a tmux session on the
-# pod, reports its progress (download, load), then tunnels localhost:8000 to the engine, checks the endpoint end to
-# end with your key, and holds the tunnel (reconnecting if it drops) until Ctrl-C.
+# Waits for the pod's sshd, copies remote/, models/ and your API key there, starts the model script in a tmux
+# session on the pod, reports its progress (download, load), then tunnels localhost:8000 to the engine, checks the
+# endpoint end to end with your key, and holds the tunnel (reconnecting if it drops) until Ctrl-C.
 #
 # Rerunning is always safe. A running model is reattached (dropped connection, closed terminal, sleeping laptop);
 # a stopped or failed one is started again, keeping what was downloaded. RESTART=1 stops the running engine first:
@@ -36,18 +36,11 @@ KNOWN="${HOME}/.ssh/known_hosts_runpod"        # pods' host keys, kept apart fro
 say()  { printf '%(%T)T  %s\n' -1 "${*}"; }
 die()  { printf 'launch: %s\n' "${*}" >&2; exit 1; }
 port_in_use() { (exec 3<> "/dev/tcp/127.0.0.1/${1}") 2> /dev/null; }
-is_helper() {                                  # remote/ files that are not models
-  case "${1}" in
-    common | container-env) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-models() {
+models() {                                     # the names of the scripts in models/
   local f m=()
-  for f in "${HERE}"/remote/*.sh; do
+  for f in "${HERE}"/models/*.sh; do
     f="${f##*/}"
-    f="${f%.sh}"
-    is_helper "${f}" || m+=("${f}")
+    m+=("${f%.sh}")
   done
   echo "${m[*]}"
 }
@@ -61,8 +54,8 @@ fi
 IP="${1}" PORT="${2}" MODEL="${3:-deepseek-v41-flash}"
 MODEL="${MODEL##*/}"
 MODEL="${MODEL%.sh}"
-if ! [[ "${MODEL}" =~ ^[A-Za-z0-9._-]+$ && -f "${HERE}/remote/${MODEL}.sh" ]] || is_helper "${MODEL}"; then
-  die "no model script remote/${MODEL}.sh (have: ${AVAILABLE})"
+if ! [[ "${MODEL}" =~ ^[A-Za-z0-9._-]+$ && -f "${HERE}/models/${MODEL}.sh" ]]; then
+  die "no model script models/${MODEL}.sh (have: ${AVAILABLE})"
 fi
 [[ "${PORT}" =~ ^[0-9]+$ ]] || die "SSH_PORT must be a number, got '${PORT}'"
 
@@ -117,14 +110,14 @@ until out="$(pod true 2>&1)"; do
   sleep 10
 done
 
-# ---- 2. copy remote/ to /root/pod/scripts and the keys to /root/pod, then start the model script in tmux, or find it already running
+# ---- 2. copy remote/, models/ and the keys to /root/pod, then start the model script in tmux, or find it running
 # The profile.d link gives your SSH logins the container's environment, as common.sh does the model's (README).
-say "pod reachable; copying remote/ and the API key"
-tar -C "${HERE}/remote" -cf - . | pod 'set -euo pipefail
-  mkdir -p /root/pod/scripts
-  tar -C /root/pod/scripts --no-same-owner -xf -
-  ln -sf /root/pod/scripts/container-env.sh /etc/profile.d/container-env.sh' \
-  || die "could not copy remote/ to the pod"
+say "pod reachable; copying remote/, models/ and the API key"
+tar -C "${HERE}" -cf - remote models | pod 'set -euo pipefail
+  mkdir -p /root/pod
+  tar -C /root/pod --no-same-owner -xf -
+  ln -sf /root/pod/remote/container-env.sh /etc/profile.d/container-env.sh' \
+  || die "could not copy remote/ and models/ to the pod"
 printf '%s\n%s\n' "${API_KEY}" "${HF_TOKEN:-}" | pod 'set -euo pipefail
   umask 077
   read -r k
@@ -158,12 +151,12 @@ if [[ -n "${pg}" ]]; then
 fi
 rm -f /root/pod/status /root/pod/model.pgid
 echo "${model}" > /root/pod/model
-tmux new-session -d -s model "bash /root/pod/scripts/${model}.sh"
+tmux new-session -d -s model "bash /root/pod/models/${model}.sh"
 echo started
 EOF
 )" || true
 case "${started}" in
-  started)            say "started remote/${MODEL}.sh on the pod (tmux session 'model')" ;;
+  started)            say "started models/${MODEL}.sh on the pod (tmux session 'model')" ;;
   "running ${MODEL}") say "${MODEL} is already running on the pod: following it" ;;
   running*)           die "the pod is running ${started#running }, not ${MODEL}. To replace it: RESTART=1 ${0} ${IP} ${PORT} ${MODEL}" ;;
   no-tmux)            die "tmux is missing on the pod: bootstrap.sh did not finish (see the pod's logs)" ;;

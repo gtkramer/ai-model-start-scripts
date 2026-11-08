@@ -2,13 +2,13 @@
 # DeepSeek-V4.1-Flash-1017 on vLLM, one engine across all GPUs in the pod (validated layout: 4x H200 SXM, TP4).
 # Flags: vLLM recipe H200 TP4 defaults + InferenceX dsv41flash H200 TP4 concurrency 1-8 scheduler point.
 # Image: vllm/vllm-openai:v0.33.0 (host driver >= 580) or v0.32.0.
-# Started by launch.sh (as /root/pod/scripts/deepseek-v41-flash.sh). After changing a setting here, apply it to a
+# Started by launch.sh (as /root/pod/models/deepseek-v41-flash.sh). After changing a setting here, apply it to a
 # running pod with RESTART=1 ./launch.sh <IP> <PORT>.
 set -euo pipefail
 
 SCRIPT_DIR="$(dirname "${0}")"
-# shellcheck source-path=SCRIPTDIR source=common.sh
-source "${SCRIPT_DIR}/common.sh"
+# shellcheck source-path=SCRIPTDIR source=../remote/common.sh
+source "${SCRIPT_DIR}/../remote/common.sh"
 
 MODEL=deepseek-ai/DeepSeek-V4.1-Flash-1017
 RUST_FRONTEND=1                      # 0: vLLM's Python frontend

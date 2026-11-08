@@ -1,14 +1,15 @@
 # shellcheck shell=bash
 # Shared helpers for model scripts. Every model script has the same shape:
 #     set -euo pipefail
-#     source "${dir}/common.sh"
+#     source "${dir}/../remote/common.sh"   # model scripts are in models/, next to remote/ (the same on the pod)
 #     preflight                          # status, hardware report, CUDA check, API key; sets ${GPUS}
 #     download <hf-repo> [hf args...]    # resumable, retried, disk-checked, progress in STATUS
 #     vllm_serve <hf-repo> [flags...]    # vllm serve with the model's flags plus the ones every model needs
 # vllm_serve is serve <engine command...> (start it, wait until it answers, stay attached to it) for vLLM.
 #
 # Everything of ours on the pod is in /root/pod (the container disk: there is no /workspace volume, and nothing
-# outlives the pod). launch.sh writes scripts/, api-key and hf-token, and starts the model script; the rest is here:
+# outlives the pod). launch.sh writes remote/, models/, api-key and hf-token, and starts the model script; the rest
+# is here:
 #     /root/pod/status        one line, polled by launch.sh:
 #                             booting | downloading ... | loading ... | ready | stopped | failed: <reason> (see <log>)
 #     /root/pod/logs/         run.log (phases, timings), download.log, vllm.log (previous run: vllm.prev.log)
