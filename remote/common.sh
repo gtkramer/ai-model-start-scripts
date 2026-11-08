@@ -17,8 +17,6 @@
 # Model weights stay in the Hugging Face default cache, /root/.cache/huggingface, where vllm and hf look for them.
 #
 # Written for the model scripts' `set -euo pipefail`; as a sourced library it leaves shell options to its caller.
-# Commands that may fail without that being an error (a grep that finds nothing, a tool missing on this host,
-# du racing a download) say how they are handled, with `|| true` or `|| <fallback>`.
 POD=/root/pod
 LOGS="${POD}/logs"
 STATUS="${POD}/status"
@@ -56,7 +54,7 @@ fi
 read_pgid() {
   local stat
   stat="$(< "/proc/${$}/stat")"
-  read -r _ _ PGID _ <<< "${stat##*) }"
+  read -r _ _ PGID _ <<< "${stat##*) }"   # stat: pid (name) state ppid pgrp ..., and the name may hold spaces
 }
 
 # run_alive: is any process of this run left, other than this script? Read from /proc, so that the check itself
@@ -66,7 +64,7 @@ run_alive() {
   for f in /proc/[0-9]*/stat; do
     [[ "${f}" != "/proc/${$}/stat" ]] || continue
     { stat="$(< "${f}")"; } 2> /dev/null || continue      # it ended while we looked
-    read -r _ _ pgrp _ <<< "${stat##*) }"
+    read -r _ _ pgrp _ <<< "${stat##*) }"                 # as in read_pgid
     [[ "${pgrp}" != "${PGID}" ]] || return 0
   done
   return 1
@@ -165,7 +163,7 @@ download() {
   local dir total="" start avail t0 now rate msg try pid
   dir="${HF_HUB_CACHE:-${HF_HOME:-${HOME}/.cache/huggingface}/hub}/models--${repo//\//--}"
   mkdir -p "${dir}"
-  export HF_XET_HIGH_PERFORMANCE=1
+  export HF_XET_HIGH_PERFORMANCE=1   # hf-xet's high-performance mode: more bandwidth and CPU (hf_transfer's successor)
   status "downloading ${repo}"
   if (( ${#} == 0 )); then
     total="$(repo_bytes "${repo}")" || total=""
@@ -178,6 +176,7 @@ download() {
     if (( total - start > avail )); then
       die "${repo} needs $(( (total - start) / GB )) GB more disk than the $(( avail / GB )) GB free: raise the template's Container Disk"
     fi
+    # Only a warning: more than the weights lands on this disk (vLLM's compile caches, hf-xet's cache, the logs).
     if (( total - start + 20000000000 > avail )); then
       log "WARNING: less than 20 GB of disk will be left after the download"
     fi

@@ -1,23 +1,13 @@
 #!/usr/bin/env bash
-# Run on your machine once a pod from the template is up (see README):
+# Run on your machine once a pod from the template is up (README: setup, each step, reconnecting and restarting).
 #
 #     ./launch.sh <POD_IP> <SSH_PORT> [model]      model: a script in models/, default deepseek-v41-flash
 #
 # IP and port: the pod's Connect tab, "SSH over exposed TCP" (the proxied ssh.runpod.io login cannot forward ports).
-# Waits for the pod's sshd, copies remote/, models/ and your API key there, starts the model script in a tmux
-# session on the pod, reports its progress (download, load), then tunnels localhost:8000 to the engine, checks the
-# endpoint end to end with your key, and holds the tunnel (reconnecting if it drops) until Ctrl-C.
-#
-# Rerunning is always safe. A running model is reattached (dropped connection, closed terminal, sleeping laptop);
-# a stopped or failed one is started again, keeping what was downloaded. RESTART=1 stops the running engine first:
-# after editing its flags or the API key, or to switch models.
-#
-# API key: ~/.config/runpod/self-hosted-api-key, the key alone on one line (README, one-time setup).
-# Env:     SSH_KEY (default ~/.ssh/id_ed25519)   LPORT (local port, default 8000)   RESTART=1
+# Rerunning is always safe: a running model is reattached, a stopped or failed one started again, keeping its download.
+# API key: ~/.config/runpod/self-hosted-api-key, the key alone on one line.
+# Env:     SSH_KEY (default ~/.ssh/id_ed25519)   LPORT (local port, default 8000)   RESTART=1 (stop the engine first)
 #          HF_TOKEN (passed on for Hugging Face downloads, if set)   API_KEY_FILE (another key file)
-#
-# Commands that may fail without that being an error (the pod not up yet, a grep that finds nothing, the tunnel
-# dropping) say how they are handled (a loop condition, `|| true`, `|| <fallback>`); anything else stops the script.
 # shellcheck disable=SC2016,SC2029  # remote commands: '...' expands on the pod, "..." here, each on purpose
 set -euo pipefail
 if (( BASH_VERSINFO[0] < 5 )); then
@@ -36,7 +26,7 @@ KNOWN="${HOME}/.ssh/known_hosts_runpod"        # pods' host keys, kept apart fro
 say()  { printf '%(%T)T  %s\n' -1 "${*}"; }
 die()  { printf 'launch: %s\n' "${*}" >&2; exit 1; }
 port_in_use() { (exec 3<> "/dev/tcp/127.0.0.1/${1}") 2> /dev/null; }
-models() {                                     # the names of the scripts in models/
+models() {
   local f m=()
   for f in "${HERE}"/models/*.sh; do
     f="${f##*/}"
@@ -72,7 +62,7 @@ EOF
   exit 1
 fi
 API_KEY="$(< "${KEYFILE}")"
-API_KEY="${API_KEY%$'\r'}"
+API_KEY="${API_KEY%$'\r'}"   # a file saved with CRLF: $(< ...) above strips the LF, not the CR
 if [[ "${API_KEY}" =~ [[:space:]] ]]; then
   die "${KEYFILE} must hold just the key, on one line"
 fi
@@ -85,13 +75,13 @@ fi
 OPTS=(-i "${KEY}" -p "${PORT}" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10
       -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o LogLevel=ERROR
       -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=${KNOWN}")
-pod() { ssh "${OPTS[@]}" "root@${IP}" "${@}"; }   # run a command on the pod
+pod() { ssh "${OPTS[@]}" "root@${IP}" "${@}"; }
 
 # A new pod is a new host, often at an IP:port an earlier pod had: forget that host key, trust this pod's on first use.
 hostid="[${IP}]:${PORT}"
-if [[ "${PORT}" == 22 ]]; then hostid="${IP}"; fi
+if [[ "${PORT}" == 22 ]]; then hostid="${IP}"; fi   # known_hosts names port 22 by the bare IP
 ssh-keygen -R "${hostid}" -f "${KNOWN}" > /dev/null 2>&1 || true   # nothing to forget on a first launch
-rm -f "${KNOWN}.old"
+rm -f "${KNOWN}.old"                           # the backup ssh-keygen -R leaves behind
 
 # ---- 1. wait for sshd: it appears a minute or two after deploy, once bootstrap.sh has installed it
 t0="${EPOCHSECONDS}"
@@ -149,7 +139,8 @@ if [[ -n "${pg}" ]]; then
     kill -0 -- "-${pg}" 2> /dev/null || break
     sleep 1
   done
-  if kill -KILL -- "-${pg}" 2> /dev/null; then sleep 5; fi   # the last resort
+  # The last resort. After a KILL, give the killed processes a moment to exit and let go of the GPUs.
+  if kill -KILL -- "-${pg}" 2> /dev/null; then sleep 5; fi
 fi
 rm -f /root/pod/status /root/pod/model.pgid
 echo "${model}" > /root/pod/model
@@ -211,6 +202,7 @@ check_and_watch() {
   done
   out="$(curl -s -m 15 -H "${auth}" -w '\n%{http_code}' "http://127.0.0.1:${LPORT}/v1/models")" || true
   code="${out##*$'\n'}"
+  # The model's id is the list's first "id"; the ids starting "modelperm-" are those of its permission entries.
   case "${code}" in
     200) model="$(grep -o '"id": *"[^"]*"' <<< "${out}" | grep -v '"modelperm-' | head -n 1 | cut -d '"' -f 4)" || true ;;
     401) say "!! the engine rejects the key in ${KEYFILE}: it was started with another one. To restart it with yours: Ctrl-C here, then RESTART=1 ${0} ${IP} ${PORT} ${MODEL}" ;;
@@ -221,7 +213,7 @@ check_and_watch() {
           -d "{\"model\":\"${model}\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with one word: ready\"}],\"max_tokens\":16}" \
           "http://127.0.0.1:${LPORT}/v1/chat/completions")" || true
     if [[ "${res%% *}" == 200 ]]; then
-      LC_ALL=C printf -v secs '%.1f' "${res#* }"
+      LC_ALL=C printf -v secs '%.1f' "${res#* }"   # curl's "0.612" is not a number to a decimal-comma locale
       cat <<EOF
 =====================================================================================================
  READY   ${model} at http://localhost:${LPORT}/v1   (your key accepted, test reply in ${secs} s)
@@ -250,6 +242,8 @@ EOF
 say "engine ready after $(( (EPOCHSECONDS - t0) / 60 )) min; opening the tunnel localhost:${LPORT} -> pod 127.0.0.1:${RPORT}"
 check_and_watch 2> /dev/null &      # its messages go to stdout; stderr would only add "Terminated" on Ctrl-C
 WATCH="${!}"
+# Ctrl-C, TERM and a closed terminal become an ordinary exit, so the EXIT trap always runs. It stops the watcher,
+# after first ending what the watcher is running (pkill -P: a sleep, curl or ssh), which would outlive it otherwise.
 trap 'pkill -P "${WATCH}" 2> /dev/null || true; kill "${WATCH}" 2> /dev/null || true' EXIT
 trap 'exit 130' INT TERM HUP
 while true; do
