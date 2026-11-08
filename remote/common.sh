@@ -25,7 +25,14 @@ GB=1000000000   # sizes are reported in GB (10^9 bytes), as Hugging Face and df 
 PORT=8000   # the engine listens on 127.0.0.1:8000 only; launch.sh tunnels it to your machine
 mkdir -p "${LOGS}"
 
-log()      { printf '[%(%F %T)T] %s\n' -1 "${*}" | tee -a "${LOG}"; }
+# The log line goes to run.log and to the tmux console. The console may already be gone (tmux kill-session):
+# writing there must not fail a shutdown in progress.
+log() {
+  local line
+  printf -v line '[%(%F %T)T] %s' -1 "${*}"
+  echo "${line}" >> "${LOG}"
+  echo "${line}" 2> /dev/null || true
+}
 progress() { echo "${1}" > "${STATUS}.tmp" && mv -f "${STATUS}.tmp" "${STATUS}"; }   # atomic: never read half-written
 status()   { progress "${1}"; log "STATUS: ${1}"; }
 die()      { status "failed: ${1}"; exit 1; }
@@ -41,27 +48,50 @@ if [[ -s "${POD}/hf-token" ]]; then   # optional, from launch.sh
   export HF_TOKEN
 fi
 
-# Until serve() starts the engine: on a stop (tmux kill-session, Ctrl-C), say so and take any child along.
-on_stop() {
-  trap '' HUP INT TERM
+# This run is one process group: this script and everything it starts (hf, the engine and the engine's own
+# processes). launch.sh waits on it before starting a new run on the GPUs.
+read_pgid() {
+  local stat
+  stat="$(< "/proc/${$}/stat")"
+  read -r _ _ PGID _ <<< "${stat##*) }"
+}
+
+# run_alive: is any process of this run left, other than this script? Read from /proc, so that the check itself
+# starts no process that would count.
+run_alive() {
+  local f stat pgrp
+  for f in /proc/[0-9]*/stat; do
+    [[ "${f}" != "/proc/${$}/stat" ]] || continue
+    { stat="$(< "${f}")"; } 2> /dev/null || continue      # it ended while we looked
+    read -r _ _ pgrp _ <<< "${stat##*) }"
+    [[ "${pgrp}" != "${PGID}" ]] || return 0
+  done
+  return 1
+}
+
+# stop_run: on a stop (tmux kill-session, Ctrl-C in the session, RESTART=1), end the whole run and wait for it.
+# Signalling only the engine's main process is not enough: tmux's SIGHUP ends vLLM's main process at once and
+# leaves its EngineCore running, still holding the GPU. vLLM's processes shut down cleanly on SIGTERM.
+stop_run() {
+  trap '' HUP INT TERM                                   # this script ignores what it now sends to its own group
   status stopped
-  local pid listed
-  local -a pids=()
-  listed="$(jobs -p)"
-  if [[ -n "${listed}" ]]; then mapfile -t pids <<< "${listed}"; fi
-  for pid in "${pids[@]}"; do kill "${pid}" 2> /dev/null || true; done
+  kill -TERM -- "-${PGID}" 2> /dev/null || true
+  local i
+  for (( i = 0; i < 60; i++ )); do
+    run_alive || exit 0
+    sleep 1
+  done
+  log "the run did not stop within 60 s of SIGTERM: killing it"
+  kill -KILL -- "-${PGID}" 2> /dev/null || true          # this script included
   exit 0
 }
 
 # preflight: everything that would otherwise fail late (after a long download) fails here, in seconds.
 preflight() {
   status booting
-  trap on_stop HUP INT TERM
-  # launch.sh waits on this process group (this script and all it starts) before starting a new run on the GPUs.
-  local stat pgid
-  stat="$(< "/proc/${$}/stat")"
-  read -r _ _ pgid _ <<< "${stat##*) }"
-  echo "${pgid}" > "${POD}/model.pgid"
+  read_pgid
+  echo "${PGID}" > "${POD}/model.pgid"
+  trap stop_run HUP INT TERM
 
   # The hardware report. On a host without a GPU, nvidia-smi is missing and these stay empty.
   local gpu_list="" gpu_name="" driver="" cuda="" vllm_version="" mem="" shm="" disk=""
@@ -73,8 +103,8 @@ preflight() {
   vllm_version="$(vllm --version 2> /dev/null | tail -n 1)" || true
   mem="$(grep '^MemAvailable:' /proc/meminfo)" || true
   mem="${mem//[^0-9]/}"
-  shm="$(df -h --output=size /dev/shm | tail -n 1)" || true
-  disk="$(df -h --output=avail / | tail -n 1)" || true
+  shm="$(df -H --output=size /dev/shm | tail -n 1)" || true
+  disk="$(df -H --output=avail / | tail -n 1)" || true
   log "GPUs: ${GPUS} x ${gpu_name}   driver: ${driver} (CUDA ${cuda})   image CUDA: ${CUDA_VERSION:-?}   vLLM: ${vllm_version}"
   log "RAM free: $(( ${mem:-0} / 1048576 )) GiB   /dev/shm: ${shm// /}   disk free: ${disk// /}"
 
@@ -187,24 +217,10 @@ serve() {
   fi
   "${@}" > "${LOGS}/vllm.log" 2>&1 &
   ENGINE="${!}"
-  trap stop_engine HUP INT TERM
   wait_ready "${ENGINE}"
   local rc=0
   wait "${ENGINE}" || rc="${?}"
   die "engine exited with code ${rc} (see ${LOGS}/vllm.log)"
-}
-
-stop_engine() {
-  trap '' HUP INT TERM                                     # one shutdown at a time; launch.sh escalates if it hangs
-  status stopped
-  kill -TERM "${ENGINE}" 2> /dev/null || true              # vLLM shuts down cleanly on SIGTERM
-  local i
-  for (( i = 0; i < 60; i++ )); do
-    kill -0 "${ENGINE}" 2> /dev/null || exit 0
-    sleep 1
-  done
-  kill -KILL "${ENGINE}" 2> /dev/null || true
-  exit 0
 }
 
 # wait_ready <pid>: poll /health while the engine lives; STATUS shows the minutes so far and its latest log line.

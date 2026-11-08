@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # The container's environment (vllm and hf on PATH, the image's CUDA variables) for shells started over SSH, which
 # do not inherit it: sshd builds a fresh environment for every session. Read exactly (NUL-separated) from PID 1,
-# the container's start command, so every value comes through as it is, whatever characters it holds.
+# which holds the container's environment as Docker set it (the start command, or docker-init in front of it on
+# GPU pods), so every value comes through as it is, whatever characters it holds.
 # One definition, sourced from two places:
 #     common.sh                              the model script (its tmux session is not a login shell)
 #     /etc/profile.d/container-env.sh        your SSH logins and new tmux windows (login shells): a link to this
