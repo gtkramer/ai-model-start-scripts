@@ -12,7 +12,7 @@ launch.sh                     local, once per session: sets up the pod, reports 
 remote/common.sh              pod side: preflight, download, serve; sourced by every model script
 remote/deepseek-v41-flash.sh  DeepSeek-V4.1-Flash-1017: the settled vLLM command, TP = GPU count
 template/bootstrap.sh         the template's Container Start Command: SSH only, the same for every model
-template/make-start-cmd.sh    prints bootstrap.sh as the JSON the template field takes (needs jq)
+template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-encoded so pasting cannot mangle it
 ```
 
 ## One-time setup
@@ -148,3 +148,5 @@ RunPod entry.
 
 `template/bootstrap.sh` only makes the pod reachable, so it seldom changes. After editing it, paste the new output of
 `template/make-start-cmd.sh` into the template's Container Start Command; pods deploy with the new one from then on.
+On the pod the script runs as `/root/bootstrap.sh`, so line numbers in an error in the pod's logs match
+`template/bootstrap.sh`.
