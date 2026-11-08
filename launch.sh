@@ -138,24 +138,23 @@ started="$(pod bash -s -- "${MODEL}" "${RESTART:-0}" <<'EOF'
 set -euo pipefail
 model="${1}" restart="${2}"
 if ! command -v tmux > /dev/null; then echo no-tmux; exit 0; fi
-stopping=""                                    # the model script stops its engine on the way out (remote/common.sh)
-if [[ "${restart}" == 1 ]] && tmux kill-session -t model 2> /dev/null; then stopping=1; fi
+if [[ "${restart}" == 1 ]]; then tmux kill-session -t model 2> /dev/null || true; fi   # the run then stops itself
 if tmux has-session -t model 2> /dev/null; then
   running="$(cat /root/pod/model 2> /dev/null)" || running=""
   echo "running ${running}"
   exit 0
 fi
-# Nothing in tmux: first make sure no process of an earlier run still holds the GPUs or the port. A run being
-# stopped gets 60 s to shut down cleanly; leftovers of a run whose script is gone are asked to go at once.
+# Nothing in tmux. No process of the last run may still hold the GPUs or the port. Stopping a run is its script's
+# job (stop_run in remote/common.sh ends all of it within about 60 s), so while that script lives this only waits.
+# The script leads the run's process group: if it is gone (killed outright), what it left is asked to go here.
 pg="$(cat /root/pod/model.pgid 2> /dev/null)" || pg=""
-if [[ -n "${pg}" ]] && kill -0 -- "-${pg}" 2> /dev/null; then
-  if [[ -z "${stopping}" ]]; then kill -TERM -- "-${pg}" 2> /dev/null || true; fi
-  for (( i = 1; i <= 120; i++ )); do
+if [[ -n "${pg}" ]]; then
+  if ! kill -0 "${pg}" 2> /dev/null; then kill -TERM -- "-${pg}" 2> /dev/null || true; fi
+  for (( i = 0; i < 75; i++ )); do
     kill -0 -- "-${pg}" 2> /dev/null || break
-    if (( i == 60 )); then kill -TERM -- "-${pg}" 2> /dev/null || true; fi
     sleep 1
   done
-  if kill -KILL -- "-${pg}" 2> /dev/null; then sleep 5; fi
+  if kill -KILL -- "-${pg}" 2> /dev/null; then sleep 5; fi   # the last resort
 fi
 rm -f /root/pod/status /root/pod/model.pgid
 echo "${model}" > /root/pod/model

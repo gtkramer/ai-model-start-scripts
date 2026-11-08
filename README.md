@@ -150,10 +150,10 @@ tmux attach -t model                  # the model script's console. Detach: Ctrl
 ## Adding a model
 
 Copy `remote/deepseek-v41-flash.sh` to `remote/<name>.sh` (any name but `common` or `container-env`) and change
-`MODEL` and the `vllm serve` flags. Keep `set -euo pipefail` and the `source` of `common.sh`, the `preflight`,
-`download` and `serve` calls, and `--host 127.0.0.1 --port "${PORT}" --api-key "${API_KEY}"`. The file name is also
-the model id the engine serves: run `./launch.sh <IP> <PORT> <name>`, and add `<name>` as a model id in VS Code's
-RunPod entry.
+`MODEL` and the model's own `vllm_serve` flags. Keep `set -euo pipefail`, the `source` of `common.sh`, and the
+`preflight`, `download` and `vllm_serve` calls. `vllm_serve` adds what every model needs after the model's flags, so
+those win: `--host 127.0.0.1`, the port `launch.sh` tunnels, your API key, and the file name as the model id the
+engine serves. Run `./launch.sh <IP> <PORT> <name>`, and add `<name>` as a model id in VS Code's RunPod entry.
 
 ## Checking the scripts
 

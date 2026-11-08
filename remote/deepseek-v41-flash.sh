@@ -11,7 +11,6 @@ SCRIPT_DIR="$(dirname "${0}")"
 source "${SCRIPT_DIR}/common.sh"
 
 MODEL=deepseek-ai/DeepSeek-V4.1-Flash-1017
-SERVED_NAME="$(basename "${0}" .sh)" # this script's name: the model id in VS Code's chatLanguageModels.json
 RUST_FRONTEND=1                      # 0: vLLM's Python frontend
 
 preflight
@@ -21,10 +20,7 @@ download "${MODEL}"
 
 export VLLM_ENGINE_READY_TIMEOUT_S=7200
 export VLLM_USE_RUST_FRONTEND="${RUST_FRONTEND}"
-serve vllm serve "${MODEL}" \
-  --served-model-name "${SERVED_NAME}" \
-  --host 127.0.0.1 --port "${PORT}" \
-  --api-key "${API_KEY}" \
+vllm_serve "${MODEL}" \
   --tokenizer-mode deepseek_v41 \
   --tensor-parallel-size "${TP}" \
   --engram-config '{"cpu_offload":true}' \

@@ -2,9 +2,10 @@
 # Shared helpers for model scripts. Every model script has the same shape:
 #     set -euo pipefail
 #     source "${dir}/common.sh"
-#     preflight                          # status, hardware report, CUDA check, API key -> ${API_KEY}, ${GPUS}
+#     preflight                          # status, hardware report, CUDA check, API key; sets ${GPUS}
 #     download <hf-repo> [hf args...]    # resumable, retried, disk-checked, progress in STATUS
-#     serve <engine command...>          # start it, wait until it answers, stay attached to it
+#     vllm_serve <hf-repo> [flags...]    # vllm serve with the model's flags plus the ones every model needs
+# vllm_serve is serve <engine command...> (start it, wait until it answers, stay attached to it) for vLLM.
 #
 # Everything of ours on the pod is in /root/pod (the container disk: there is no /workspace volume, and nothing
 # outlives the pod). launch.sh writes scripts/, api-key and hf-token, and starts the model script; the rest is here:
@@ -23,6 +24,7 @@ STATUS="${POD}/status"
 LOG="${LOGS}/run.log"
 GB=1000000000   # sizes are reported in GB (10^9 bytes), as Hugging Face and df -H report them
 PORT=8000   # the engine listens on 127.0.0.1:8000 only; launch.sh tunnels it to your machine
+SERVED_NAME="$(basename "${0}" .sh)"   # the model script's file name: the model id for VS Code and launch.sh
 mkdir -p "${LOGS}"
 
 # The log line goes to run.log and to the tmux console. The console may already be gone (tmux kill-session):
@@ -93,14 +95,15 @@ preflight() {
   echo "${PGID}" > "${POD}/model.pgid"
   trap stop_run HUP INT TERM
 
-  # The hardware report. On a host without a GPU, nvidia-smi is missing and these stay empty.
+  # The hardware report. On a host without a GPU, nvidia-smi is missing and these stay empty. The vLLM version is
+  # read from its package metadata: `vllm --version` imports all of vLLM first, which takes about 15 s.
   local gpu_list="" gpu_name="" driver="" cuda="" vllm_version="" mem="" shm="" disk=""
   gpu_list="$(nvidia-smi -L 2> /dev/null)" || true
   GPUS="$(grep -c '^GPU' <<< "${gpu_list}")" || GPUS=0
   gpu_name="$(nvidia-smi --query-gpu=name --format=csv,noheader 2> /dev/null | head -n 1)" || true
   driver="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2> /dev/null | head -n 1)" || true
   cuda="$(nvidia-smi 2> /dev/null | grep -o 'CUDA Version: [0-9.]*' | cut -d ' ' -f 3)" || true
-  vllm_version="$(vllm --version 2> /dev/null | tail -n 1)" || true
+  vllm_version="$(python3 -c 'import importlib.metadata as m; print(m.version("vllm"))' 2> /dev/null)" || true
   mem="$(grep '^MemAvailable:' /proc/meminfo)" || true
   mem="${mem//[^0-9]/}"
   shm="$(df -H --output=size /dev/shm | tail -n 1)" || true
@@ -131,7 +134,6 @@ EOF
 
   # The API key comes from your machine: launch.sh writes it before starting this script.
   [[ -s "${POD}/api-key" ]] || die "no API key in ${POD}/api-key: start models with launch.sh, which writes it"
-  # shellcheck disable=SC2034  # an output of preflight, for the model script's `vllm serve --api-key`
   API_KEY="$(< "${POD}/api-key")"
 }
 
@@ -221,6 +223,16 @@ serve() {
   local rc=0
   wait "${ENGINE}" || rc="${?}"
   die "engine exited with code ${rc} (see ${LOGS}/vllm.log)"
+}
+
+# vllm_serve <hf-repo> [flags...]: serve the model with vLLM: the model's own flags, then the ones every model needs.
+# Those come last so that they win if the model's flags repeat one (vLLM keeps the last and warns "Found duplicate
+# keys"): 127.0.0.1 only, on the port launch.sh tunnels, behind your API key, served as this script's name.
+vllm_serve() {
+  local repo="${1}"
+  shift
+  serve vllm serve "${repo}" "${@}" \
+    --served-model-name "${SERVED_NAME}" --host 127.0.0.1 --port "${PORT}" --api-key "${API_KEY}"
 }
 
 # wait_ready <pid>: poll /health while the engine lives; STATUS shows the minutes so far and its latest log line.
