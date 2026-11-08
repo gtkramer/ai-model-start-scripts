@@ -14,6 +14,7 @@ remote/container-env.sh       pod side: the container's environment (vllm, hf, C
 remote/deepseek-v41-flash.sh  DeepSeek-V4.1-Flash-1017: the settled vLLM command, TP = GPU count
 template/bootstrap.sh         the template's Container Start Command: SSH only, the same for every model
 template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-encoded so pasting cannot mangle it
+.shellcheckrc                 ShellCheck with every optional check on (see "Checking the scripts")
 ```
 
 ## One-time setup
@@ -147,10 +148,32 @@ tmux attach -t model                  # the model script's console. Detach: Ctrl
 
 ## Adding a model
 
-Copy `remote/deepseek-v41-flash.sh` to `remote/<name>.sh` (any name but `common` or `container-env`) and change `MODEL` and the `vllm serve` flags. Keep the
-`preflight`, `download` and `serve` calls, and `--host 127.0.0.1 --port "$PORT" --api-key "$API_KEY"`. The file name is
-also the model id the engine serves: run `./launch.sh <IP> <PORT> <name>`, and add `<name>` as a model id in VS Code's
+Copy `remote/deepseek-v41-flash.sh` to `remote/<name>.sh` (any name but `common` or `container-env`) and change
+`MODEL` and the `vllm serve` flags. Keep `set -euo pipefail` and the `source` of `common.sh`, the `preflight`,
+`download` and `serve` calls, and `--host 127.0.0.1 --port "${PORT}" --api-key "${API_KEY}"`. The file name is also
+the model id the engine serves: run `./launch.sh <IP> <PORT> <name>`, and add `<name>` as a model id in VS Code's
 RunPod entry.
+
+## Checking the scripts
+
+All scripts must pass [ShellCheck](https://www.shellcheck.net/) with every optional check on, which `.shellcheckrc`
+sets (editors with a ShellCheck extension pick it up). From the repo root:
+
+```bash
+shellcheck launch.sh remote/*.sh template/*.sh
+```
+
+The conventions it enforces, and the ones it can't see:
+
+- Every expansion is braced and double-quoted, assignments included: `x="${var}"`, `x="$(cmd)"`, `rc="${?}"`, also in
+  the code `launch.sh` runs on the pod. The exceptions are where quotes would change the meaning: names inside
+  `(( ))` and `$(( ))` (written bare, `(( total > avail ))`), the regex on the right of `=~`, and heredoc text.
+- Tests use `[[ ]]` and `(( ))`. The exception is the first test in `remote/container-env.sh`, which plain `sh` must parse.
+- Scripts that are run set `set -euo pipefail`. A command that may fail without that being an error says how it is
+  handled (`|| true`, `|| <fallback>`). Sourced files (`common.sh`, `container-env.sh`) set no options and work under
+  these. `template/bootstrap.sh` is the exception: `-u` and `pipefail` but not `-e`, so that it always reaches
+  `sleep infinity` and the pod stays reachable.
+- `launch.sh` needs bash 5 or newer (`EPOCHSECONDS`, `printf '%(...)T'`).
 
 ## Changing the template
 

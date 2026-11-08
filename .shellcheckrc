@@ -1,0 +1,9 @@
+# Every optional check, among them require-variable-braces (no naked $var), require-double-brackets and the
+# set -e checks. Run from the repo root: shellcheck launch.sh remote/*.sh template/*.sh
+enable=all
+external-sources=true
+source-path=SCRIPTDIR
+
+# SC2310: "function invoked in a condition, so set -e is disabled inside it". Intended wherever it occurs: the
+# functions used as conditions (pod, port_in_use, is_helper) are one-command checks whose status is the answer.
+disable=SC2310

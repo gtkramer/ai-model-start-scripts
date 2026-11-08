@@ -4,26 +4,29 @@
 # Image: vllm/vllm-openai:v0.33.0 (host driver >= 580) or v0.32.0.
 # Started by launch.sh (as /root/pod/scripts/deepseek-v41-flash.sh). After changing a setting here, apply it to a
 # running pod with RESTART=1 ./launch.sh <IP> <PORT>.
+set -euo pipefail
+
+SCRIPT_DIR="$(dirname "${0}")"
 # shellcheck source-path=SCRIPTDIR source=common.sh
-. "$(dirname "$0")/common.sh"
+source "${SCRIPT_DIR}/common.sh"
 
 MODEL=deepseek-ai/DeepSeek-V4.1-Flash-1017
-SERVED_NAME=$(basename "$0" .sh)     # this script's name: the model id in VS Code's chatLanguageModels.json
+SERVED_NAME="$(basename "${0}" .sh)" # this script's name: the model id in VS Code's chatLanguageModels.json
 RUST_FRONTEND=1                      # 0: vLLM's Python frontend
 
 preflight
-TP=$GPUS                             # one engine across all GPUs in the pod
-[ "$TP" -eq 4 ] || log "WARNING: TP$TP is not the validated 4x H200 layout"
-download "$MODEL"
+TP="${GPUS}"                         # one engine across all GPUs in the pod
+(( TP == 4 )) || log "WARNING: TP${TP} is not the validated 4x H200 layout"
+download "${MODEL}"
 
 export VLLM_ENGINE_READY_TIMEOUT_S=7200
-export VLLM_USE_RUST_FRONTEND=$RUST_FRONTEND
-serve vllm serve "$MODEL" \
-  --served-model-name "$SERVED_NAME" \
-  --host 127.0.0.1 --port "$PORT" \
-  --api-key "$API_KEY" \
+export VLLM_USE_RUST_FRONTEND="${RUST_FRONTEND}"
+serve vllm serve "${MODEL}" \
+  --served-model-name "${SERVED_NAME}" \
+  --host 127.0.0.1 --port "${PORT}" \
+  --api-key "${API_KEY}" \
   --tokenizer-mode deepseek_v41 \
-  --tensor-parallel-size "$TP" \
+  --tensor-parallel-size "${TP}" \
   --engram-config '{"cpu_offload":true}' \
   --tool-call-parser deepseek_v41 \
   --enable-auto-tool-choice \

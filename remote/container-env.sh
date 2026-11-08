@@ -6,10 +6,25 @@
 #     common.sh                              the model script (its tmux session is not a login shell)
 #     /etc/profile.d/container-env.sh        your SSH logins and new tmux windows (login shells): a link to this
 #                                            file, which launch.sh makes on every launch
-# /etc/profile is read by any login shell, sh included, and only bash can run this: other shells skip it.
-[ -n "${BASH_VERSION:-}" ] && [ -r /proc/1/environ ] || return 0
-while IFS= read -r -d '' kv; do
-  # shellcheck disable=SC2163  # kv is NAME=value: export it as such
-  case ${kv%%=*} in HOME|PWD|OLDPWD|SHLVL|TERM|HOSTNAME|PUBLIC_KEY|_) ;; *) export "$kv" 2>/dev/null ;; esac
-done < /proc/1/environ
-unset kv
+#
+# Sourced, never run, so it sets no shell options (it must not change those of your login shell), and it works
+# under the `set -euo pipefail` of the model scripts. Its only name, the function below, is removed after use.
+
+# /etc/profile is read by any login shell, sh included, and only bash can run this: other shells skip it. This
+# test is therefore POSIX `[ ]`, not `[[ ]]`, so that sh can parse it.
+# shellcheck disable=SC2292
+if [ -z "${BASH_VERSION:-}" ] || [ ! -r /proc/1/environ ]; then
+  return 0
+fi
+
+container_env_import() {
+  local kv
+  while IFS= read -r -d '' kv; do
+    case "${kv%%=*}" in
+      HOME | PWD | OLDPWD | SHLVL | TERM | HOSTNAME | PUBLIC_KEY | _) ;;
+      *) export "${kv?}" 2> /dev/null || true ;;   # a name bash cannot hold is skipped
+    esac
+  done < /proc/1/environ
+}
+container_env_import
+unset -f container_env_import
