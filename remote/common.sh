@@ -28,14 +28,10 @@ nap()      { sleep "$1" & wait $!; }      # a sleep that a signal (tmux kill-ses
 gb()       { echo $(( ${1:-0} / 1000000000 )); }
 since()    { echo $(( ($(date +%s) - $1) / 60 )); }
 
-# The tmux session runs under an SSH login, which does not inherit the container's environment. bootstrap.sh copies
-# it to /etc/environment for PAM; should that not have applied, take it straight from PID 1 (the container's).
-if ! command -v vllm >/dev/null 2>&1; then
-  while IFS= read -r -d '' kv; do
-    # shellcheck disable=SC2163  # kv is NAME=value: export it as such
-    case ${kv%%=*} in HOME|PWD|OLDPWD|SHLVL|TERM|HOSTNAME|_) ;; *) export "$kv" 2>/dev/null ;; esac
-  done < /proc/1/environ
-fi
+# The tmux session runs under an SSH login, which does not inherit the container's environment (vllm on PATH, the
+# image's CUDA variables): import it, the same way your SSH logins get it.
+# shellcheck source-path=SCRIPTDIR source=container-env.sh
+. "$(dirname "${BASH_SOURCE[0]}")/container-env.sh"
 if [ -s $POD/hf-token ]; then HF_TOKEN=$(cat $POD/hf-token); export HF_TOKEN; fi   # optional, from launch.sh
 
 # preflight: everything that would otherwise fail late (after a long download) fails here, in seconds.
@@ -51,6 +47,7 @@ preflight() {
   [ "$GPUS" -ge 1 ] || die "no GPU visible to nvidia-smi"
   command -v vllm >/dev/null || die "vllm not found: the template image should be vllm/vllm-openai"
   command -v hf >/dev/null || die "the hf CLI is missing from the image"
+  command -v curl >/dev/null || die "curl is missing from the image: it is how the engine's readiness is checked"
 
   # A host driver too old for the image's CUDA otherwise shows only when the engine loads.
   python3 - >>"$LOG" 2>&1 <<'EOF'

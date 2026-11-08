@@ -10,6 +10,7 @@ SSH tunnel from `localhost:8000` to the engine for VS Code.
 ```
 launch.sh                     local, once per session: sets up the pod, reports progress, holds the tunnel
 remote/common.sh              pod side: preflight, download, serve; sourced by every model script
+remote/container-env.sh       pod side: the container's environment (vllm, hf, CUDA) for SSH shells and the model
 remote/deepseek-v41-flash.sh  DeepSeek-V4.1-Flash-1017: the settled vLLM command, TP = GPU count
 template/bootstrap.sh         the template's Container Start Command: SSH only, the same for every model
 template/make-start-cmd.sh    prints the template field: bootstrap.sh, base64-encoded so pasting cannot mangle it
@@ -118,6 +119,7 @@ the pod
   /root/pod/status                       the current phase, which launch.sh polls
   /root/pod/api-key, hf-token            written by launch.sh, mode 600
   /root/pod/model, model.pgid            what is running, and its process group (for RESTART=1)
+  /etc/profile.d/container-env.sh        link to scripts/container-env.sh, made by launch.sh: see below
   /root/.cache/huggingface/              the model weights: Hugging Face's default cache, where hf and vllm look
 ```
 
@@ -125,6 +127,12 @@ The pod has no `/workspace`. On RunPod, that is where a volume disk or a network
 has neither (Volume Disk `0`). Everything is on the container disk, the pod's own filesystem, which the template's
 Container Disk (650 GB) sizes. RunPod erases it when the pod stops, and Terminate deletes it with the pod: nothing,
 logs included, outlives a session.
+
+SSH sessions don't inherit the container's environment: sshd starts each one with a minimal PATH, without the
+image's `vllm`, `hf` and CUDA variables. `remote/container-env.sh` imports it from the container's first process, and
+is the one place that does: `common.sh` sources it for the model script, and the `/etc/profile.d` link applies it to
+your SSH logins and to new tmux windows. A one-off `ssh <pod> <command>` is not a login shell and doesn't get it:
+log in, or run `. /etc/profile.d/container-env.sh` first.
 
 ## When something goes wrong
 
@@ -139,7 +147,7 @@ tmux attach -t model                  # the model script's console. Detach: Ctrl
 
 ## Adding a model
 
-Copy `remote/deepseek-v41-flash.sh` to `remote/<name>.sh` and change `MODEL` and the `vllm serve` flags. Keep the
+Copy `remote/deepseek-v41-flash.sh` to `remote/<name>.sh` (any name but `common` or `container-env`) and change `MODEL` and the `vllm serve` flags. Keep the
 `preflight`, `download` and `serve` calls, and `--host 127.0.0.1 --port "$PORT" --api-key "$API_KEY"`. The file name is
 also the model id the engine serves: run `./launch.sh <IP> <PORT> <name>`, and add `<name>` as a model id in VS Code's
 RunPod entry.

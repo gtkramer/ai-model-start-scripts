@@ -29,14 +29,16 @@ say()  { printf '%s  %s\n' "$(date +%T)" "$*"; }
 die()  { printf 'launch: %s\n' "$*" >&2; exit 1; }
 mins() { echo $(( ($(date +%s) - $1) / 60 )); }
 port_in_use() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-models() { local f m=(); for f in "$HERE"/remote/*.sh; do f=${f##*/}; [ "$f" = common.sh ] || m+=("${f%.sh}"); done; echo "${m[*]}"; }
+is_helper() { case $1 in common|container-env) return 0 ;; *) return 1 ;; esac; }   # remote/ files that are not models
+models() { local f m=(); for f in "$HERE"/remote/*.sh; do f=${f##*/}; f=${f%.sh}; is_helper "$f" || m+=("$f"); done; echo "${m[*]}"; }
 
 # ---- 0. arguments, config, local checks: what can fail here fails now, not after you have waited on the pod
 [ $# -ge 2 ] || { echo "usage: $0 <POD_IP> <SSH_PORT> [model]    models: $(models)" >&2; exit 2; }
 IP=$1 PORT=$2 MODEL=${3:-deepseek-v41-flash}
 MODEL=${MODEL##*/}; MODEL=${MODEL%.sh}
-[[ $MODEL =~ ^[A-Za-z0-9._-]+$ && $MODEL != common && -f $HERE/remote/$MODEL.sh ]] \
-  || die "no model script remote/$MODEL.sh (have: $(models))"
+if ! [[ $MODEL =~ ^[A-Za-z0-9._-]+$ && -f $HERE/remote/$MODEL.sh ]] || is_helper "$MODEL"; then
+  die "no model script remote/$MODEL.sh (have: $(models))"
+fi
 [[ $PORT =~ ^[0-9]+$ ]] || die "SSH_PORT must be a number, got '$PORT'"
 
 if [ ! -s "$KEYFILE" ]; then
@@ -79,8 +81,10 @@ until out=$(pod true 2>&1); do
 done
 
 # ---- 2. copy remote/ to /root/pod/scripts and the keys to /root/pod, then start the model script in tmux, or find it already running
+# The profile.d link gives your SSH logins the container's environment (vllm, hf, CUDA), as common.sh does the model's.
 say "pod reachable; copying remote/ and the API key"
-tar -C "$HERE/remote" -cf - . | pod 'mkdir -p /root/pod/scripts && tar -C /root/pod/scripts --no-same-owner -xf -' \
+tar -C "$HERE/remote" -cf - . | pod 'mkdir -p /root/pod/scripts && tar -C /root/pod/scripts --no-same-owner -xf - \
+  && ln -sf /root/pod/scripts/container-env.sh /etc/profile.d/container-env.sh' \
   || die "could not copy remote/ to the pod"
 printf '%s\n%s\n' "$API_KEY" "${HF_TOKEN:-}" | pod 'umask 077; read -r k; read -r t
   printf %s "$k" > /root/pod/api-key
