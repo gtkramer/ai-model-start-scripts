@@ -152,10 +152,13 @@ print(sum(f.size or 0 for f in info.siblings or []))
 EOF
 }
 
-# dir_bytes <dir>: bytes under it. du may complain about files that vanish mid-download, and still prints the total.
+# dir_bytes <dir>: bytes under it, symlinks followed. huggingface_hub 2.x moves each finished Xet file into a store
+# shared by all repos (hub/blobs/) and leaves a symlink in the repo's blobs/: without -L, a complete download counts
+# as 0. A file still downloading is a plain file in the repo's blobs/. du counts a file reached by several links
+# once. It may complain about files that vanish mid-download, and still prints the total.
 dir_bytes() {
   local out
-  out="$(du -s -B1 "${1}" 2> /dev/null)" || true
+  out="$(du -s -L -B1 "${1}" 2> /dev/null)" || true
   echo "${out%%[[:space:]]*}"
 }
 

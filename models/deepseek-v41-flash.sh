@@ -41,5 +41,4 @@ vllm_serve "${MODEL}" \
   --max-num-seqs 16 \
   --max-num-batched-tokens 4096 \
   --max-cudagraph-capture-size 64 \
-  --safetensors-load-strategy prefetch \
-  --override-generation-config '{"temperature":1.0,"top_p":1.0}'
+  --safetensors-load-strategy prefetch
