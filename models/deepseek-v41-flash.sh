@@ -11,7 +11,9 @@ SCRIPT_DIR="$(dirname "${0}")"
 source "${SCRIPT_DIR}/../remote/common.sh"
 
 MODEL=deepseek-ai/DeepSeek-V4.1-Flash-1017
-RUST_FRONTEND=1                      # 0: vLLM's Python frontend
+# 0: vLLM's Python frontend
+# 1: vLLM's Rust frontend
+RUST_FRONTEND=0
 
 # VS Code's entry for this model, which launch.sh prints for chatLanguageModels.json: "# vscode <property> <JSON
 # value>" lines, read on your machine (README, "Adding a model"). The token limits must fit in --max-model-len.
